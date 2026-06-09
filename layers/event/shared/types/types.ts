@@ -1,4 +1,4 @@
-import type { File } from "~~/layers/file/shared/types";
+import type { File } from "~~/layers/file/shared/types/types";
 
 export interface Event {
     eventId: string,

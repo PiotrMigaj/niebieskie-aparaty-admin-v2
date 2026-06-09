@@ -1,4 +1,4 @@
-import type { File as FileEntity } from '#layers/file/shared/types'
+import type { File as FileEntity } from '~~/layers/file/shared/types/types'
 
 const PART_SIZE = 5 * 1024 * 1024
 

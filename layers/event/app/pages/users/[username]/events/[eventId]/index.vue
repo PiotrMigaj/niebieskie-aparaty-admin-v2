@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type { Event as AppEvent } from '#layers/event/shared/types/types'
-import type { File } from '#layers/file/shared/types'
+import type { File } from '~~/layers/file/shared/types/types'
 
 const route = useRoute()
 const username = route.params.username as string
 const eventId = route.params.eventId as string
 
 const { event, status, error, refresh } = useEvent(username, eventId, { include: 'files' })
+const { data: selection, status: selectionStatus } = useSelection(username, eventId)
 
 const files = computed<File[]>(() => (event?.value as any)?.files ?? [])
 
@@ -135,6 +136,18 @@ function formatDate(value: string | Date) {
           >
             {{ e.selectionAvailable ? 'Available' : 'Unavailable' }}
           </span>
+          <div class="mt-4">
+            <div v-if="selectionStatus !== 'success' && selectionStatus !== 'error'" class="h-8" />
+            <UButton
+              v-else-if="selection"
+              :to="`/users/${username}/events/${eventId}/selections/${selection.selectionId}`"
+              color="neutral"
+              variant="solid"
+              label="View selection"
+              class="text-[10px] tracking-[0.25em] uppercase"
+            />
+            <CreateSelection v-else :username="username" :event-id="e.eventId" :event-title="e.title" />
+          </div>
         </div>
       </div>
 

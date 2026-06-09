@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { File } from '#layers/file/shared/types'
+import type { File } from '~~/layers/file/shared/types/types'
 
 const props = defineProps<{ file: File }>()
 const open = defineModel<boolean>('open')

@@ -1,4 +1,4 @@
-import { CreateFileSchema } from "../../../shared/schemas";
+import { CreateFileSchema } from "../../../shared/types/schemas";
 import { fileRepository } from "../../repository/fileRepository";
 import { userRepository } from "#layers/user/server/repository/userRepository";
 

@@ -73,8 +73,8 @@
 <script setup lang="ts">
 import { h, resolveComponent } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
-import { UserRole } from '../../shared/types'
-import type { User } from '../../shared/types'
+import { UserRole } from '../../shared/types/types'
+import type { User } from '../../shared/types/types'
 
 const UDropdownMenu = resolveComponent('UDropdownMenu')
 const UButton = resolveComponent('UButton')

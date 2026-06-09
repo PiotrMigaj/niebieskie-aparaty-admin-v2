@@ -1,4 +1,4 @@
-import { CreateUserSchema } from '../../../shared/schemas'
+import { CreateUserSchema } from '../../../shared/types/schemas'
 import { userRepository } from '../../repository/userRepository'
 
 export default defineEventHandler(async (event) => {

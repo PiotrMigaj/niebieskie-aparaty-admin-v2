@@ -1,5 +1,5 @@
-import type { CreateUserInput } from "../../shared/schemas";
-import type { User } from "../../shared/types";
+import type { CreateUserInput } from "../../shared/types/schemas";
+import type { User } from "../../shared/types/types";
 
 export function useUser(
   username?: string,

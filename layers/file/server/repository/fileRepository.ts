@@ -1,5 +1,5 @@
-import type { CreateFileInput } from '../../shared/schemas'
-import type { File } from '../../shared/types'
+import type { CreateFileInput } from '../../shared/types/schemas'
+import type { File } from '../../shared/types/types'
 
 class FileRepository {
   async persist(input: CreateFileInput): Promise<File> {

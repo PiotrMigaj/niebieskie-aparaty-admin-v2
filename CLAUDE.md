@@ -57,11 +57,17 @@ Types from `layers/*/shared/types.ts` are NOT auto-imported — always import th
 
 The `Event` type in `layers/event/shared/types/types.ts` clashes with the DOM global `Event`. In Vue components, alias it: `import type { Event as AppEvent } from '#layers/event/shared/types/types'` and cast return values through `unknown`: `result as unknown as AppEvent`.
 
-Event layer shared files are nested one level deeper than other layers: `layers/event/shared/types/types.ts` and `layers/event/shared/types/schemas.ts` (not `shared/types.ts` / `shared/schemas.ts`).
+Event layer shared files are nested one level deeper than other layers: `layers/event/shared/types/types.ts` and `layers/event/shared/types/schemas.ts` (not `shared/types.ts` / `shared/schemas.ts`). The selection layer follows the same pattern: `layers/selection/shared/types/types.ts` and `layers/selection/shared/types/schemas.ts`.
 
 Server API handlers in `layers/<name>/server/api/<entity>/` are 3 levels from `shared/` — use `../../../shared/schemas`. Handlers nested one level deeper (e.g., `[username]/handler.ts` or `[username]/[id]/handler.ts`) need one extra `../` per level of nesting.
 
+After adding a new layer, `#layers/<name>/*` alias imports will show `Cannot find module` TS errors until `pnpm nuxi prepare` is run — this is expected, not a real error.
+
 HTML void elements must not be self-closed: write `<input>` and `<img>`, not `<input/>` or `<img/>` — the Nuxt ESLint config flags self-closing void elements as warnings.
+
+## Zod version
+
+This project uses **Zod v4** (`^4.4.3`). The `invalid_type_error` / `required_error` constructor options from Zod v3 do not exist — use `.message` on the individual validators instead (e.g. `z.string().min(1, { message: '...' })`).
 
 ## S3 commands
 

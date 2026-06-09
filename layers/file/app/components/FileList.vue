@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { h, resolveComponent } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
-import type { File } from '#layers/file/shared/types'
+import type { File } from '~~/layers/file/shared/types/types'
 
 defineProps<{ files: File[] }>()
 const emit = defineEmits<{ deleted: [] }>()

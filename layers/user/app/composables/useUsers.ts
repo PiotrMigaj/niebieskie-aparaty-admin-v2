@@ -1,4 +1,4 @@
-import type { User } from "../../shared/types";
+import type { User } from "../../shared/types/types";
 
 export function useUsers() {
   const { data: users, status } = useFetch<User[]>("/api/users", {

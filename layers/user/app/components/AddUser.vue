@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CreateUserSchema, type CreateUserInput } from '../../shared/schemas'
+import { CreateUserSchema, type CreateUserInput } from '../../shared/types/schemas'
 
 const open = ref(false)
 const loading = ref(false)

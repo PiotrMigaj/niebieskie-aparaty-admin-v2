@@ -1,0 +1,35 @@
+{
+  "fileName": {
+    "S": "IMG_6225.JPG"
+  },
+  "eventId": {
+    "S": "be6c6d06-4328-410c-9435-c2a2b0395722"
+  },
+  "compressedFileHeight": {
+    "S": "3750"
+  },
+  "compressedFileName": {
+    "S": "IMG_6225.webp"
+  },
+  "compressedFileObjectKey": {
+    "S": "oaza_2025/be6c6d06-4328-410c-9435-c2a2b0395722/images/compressed/IMG_6225.webp"
+  },
+  "compressedFilePresignedUrl": {
+    "S": "https://niebieskie-aparaty-test-upload.s3.eu-central-1.amazonaws.com/oaza_2025/be6c6d06-4328-410c-9435-c2a2b0395722/images/compressed/IMG_6225.webp?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA3C6FMH23VKERDERK%2F20260601%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20260601T020020Z&X-Amz-Expires=604800&X-Amz-Signature=4da37bc58a142fa34a78c2f67f8d5f3f605558bd9d45deba4233bc0db69122ee&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject"
+  },
+  "compressedFileWidth": {
+    "S": "2500"
+  },
+  "originalFileObjectKey": {
+    "S": "oaza_2025/be6c6d06-4328-410c-9435-c2a2b0395722/images/original/IMG_6225.JPG"
+  },
+  "originalFilePresignedUrl": {
+    "S": "https://niebieskie-aparaty-test-upload.s3.eu-central-1.amazonaws.com/oaza_2025/be6c6d06-4328-410c-9435-c2a2b0395722/images/original/IMG_6225.JPG?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA3C6FMH23VKERDERK%2F20260601%2Feu-central-1%2Fs3%2Faws4_request&X-Amz-Date=20260601T020020Z&X-Amz-Expires=604800&X-Amz-Signature=0fe587cf33835b433840c891d0804d7ad114a37cbf4076088bcdc7922607b758&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject"
+  },
+  "presignDateTime": {
+    "S": "2026-06-01T02:00:20.722Z"
+  },
+  "username": {
+    "S": "oaza_2025"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "username": {
+    "S": "zuza_wojtek"
+  },
+  "active": {
+    "BOOL": true
+  },
+  "createdAt": {
+    "S": "2026-05-04T11:49:33.933Z"
+  },
+  "email": {
+    "NULL": true
+  },
+  "fullName": {
+    "S": "Zuza i Wojtek"
+  },
+  "password": {
+    "S": "$2b$10$2AuCJDVEzGeraaGTy02eCO4XtpURhHA50BFQ6F1qn7wrvx6lLfNvS"
+  },
+  "role": {
+    "S": "USER"
+  }
+}

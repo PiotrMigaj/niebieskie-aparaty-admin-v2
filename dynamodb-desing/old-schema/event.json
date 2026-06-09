@@ -1,0 +1,41 @@
+{
+  "eventId": {
+    "S": "0c8fe3d3-67c2-4611-ad52-10fa577bcaf4"
+  },
+  "camelGallery": {
+    "BOOL": true
+  },
+  "createdAt": {
+    "S": "2026-05-04T11:50:13.854Z"
+  },
+  "date": {
+    "S": "2026-04-29"
+  },
+  "description": {
+    "NULL": true
+  },
+  "galleryId": {
+    "NULL": true
+  },
+  "imagePlaceholderObjectKey": {
+    "S": "zuza_wojtek/0c8fe3d3-67c2-4611-ad52-10fa577bcaf4/okladka.jpg"
+  },
+  "selectionAvailable": {
+    "BOOL": false
+  },
+  "title": {
+    "S": "Sesja ciążowa"
+  },
+  "tokenId": {
+    "S": "13fa3c4f-8a67-460f-8c07-4d3c5e098acf"
+  },
+  "tokenIdCreatedAt": {
+    "S": "2026-05-19"
+  },
+  "tokenIdValidDays": {
+    "S": "30"
+  },
+  "username": {
+    "S": "zuza_wojtek"
+  }
+}

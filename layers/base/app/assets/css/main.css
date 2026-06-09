@@ -1,0 +1,22 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300..700;1,300..700&family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+@source '../../../../';
+
+@theme {
+  --font-sans: 'Montserrat', sans-serif;
+  --font-serif: 'Cormorant', serif;
+
+  --ui-primary: #121212;
+  --ui-muted: #f5f5f5;
+  --ui-border: #e5e5e5;
+  --ui-text-muted: #888888;
+  --ui-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  --ui-radius: 0;
+}
+
+.font-cormorant {
+  font-family: var(--font-serif);
+}

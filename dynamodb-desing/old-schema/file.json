@@ -1,0 +1,23 @@
+{
+  "fileId": {
+    "S": "f49d4a43-df70-4d92-a290-65839224c3ed"
+  },
+  "createdAt": {
+    "S": "2026-05-08T12:13:20.770Z"
+  },
+  "dateOfLastDownload": {
+    "NULL": true
+  },
+  "description": {
+    "S": "zdjęcia do pobrania, najwyższa jakość"
+  },
+  "eventId": {
+    "S": "0c8fe3d3-67c2-4611-ad52-10fa577bcaf4"
+  },
+  "objectKey": {
+    "S": "zuza_wojtek/0c8fe3d3-67c2-4611-ad52-10fa577bcaf4/gotowe.zip"
+  },
+  "username": {
+    "S": "zuza_wojtek"
+  }
+}

@@ -73,6 +73,10 @@ This project uses **Zod v4** (`^4.4.3`). The `invalid_type_error` / `required_er
 
 S3 commands are re-exported from `layers/base/server/utils/s3.ts` for auto-import in server code (same pattern as DynamoDB commands). Currently exported: `PutObjectCommand`, `GetObjectCommand`, `DeleteObjectCommand`, multipart commands. Add new commands there before using them in handlers.
 
+## UAlert close callback
+
+`:close="{ onClick: () => x = null }"` — assignment expressions return the assigned value; TypeScript rejects this because the callback must return `void`. Use a block body: `:close="{ onClick: () => { x = null } }"`.
+
 ## UTable row-action modal pattern
 
 When a modal is triggered from a UTable cell (where the trigger lives in a `h()` renderer), control it externally: `const rowToDelete = ref<Entity | null>(null); const open = ref(false); watch(rowToDelete, v => { if (v) open.value = true })`. Render `<DeleteFoo v-if="rowToDelete" v-model:open="open" :item="rowToDelete" @deleted="rowToDelete = null" />` below the table. The component uses `defineModel<boolean>('open')` instead of a local `ref`.
@@ -80,6 +84,29 @@ When a modal is triggered from a UTable cell (where the trigger lives in a `h()`
 ## API conventions
 
 Optional relation loading: use `?include=<relation>` query param to embed related entities. Example: `GET /api/users/:username?include=events` spreads `events` onto the returned object. Gate with `getQuery(event).include === '<relation>'` and fetch lazily — never fetch relations by default.
+
+## Serverless (SAM)
+
+`selection-serverless/` is a SAM project sibling to `layers/` (NOT part of the Nuxt build). It runs the selection upload pipeline (Lambdas, SQS, transient S3 bucket). See `selection-serverless/README.md` and `selection-knowledge/architecture.md`.
+
+- Build & deploy: `pnpm build && sam deploy` (from `selection-serverless/`). `pnpm build` wraps `sam build` with `npm_config_cpu=arm64 npm_config_os=linux npm_config_libc=glibc` so npm installs sharp's Linux arm64 binary on a macOS host — required because Lambda runs Linux arm64.
+- The Lambdas write to the same DynamoDB table (`niebieskie-aparaty-prod`) using the same PK/SK shapes as the Nuxt repositories. The race-safe completion gate logic is duplicated in `selection-serverless/src/shared/completion.ts` and `layers/selection/server/utils/tryEnqueueFinalize.ts` — keep them in sync.
+- Each `AWS::Serverless::Function` has a `Metadata: BuildMethod: esbuild` block with `External: [sharp, '@aws-sdk/*']`. No separate esbuild config file.
+- **External deps need a Lambda Layer, not just `External:` in BuildProperties.** SAM's `nodejs-npm-esbuild` builder produces only the bundled JS — it does NOT ship `node_modules` for anything listed in `External`. Native modules like `sharp` must be packaged as an `AWS::Serverless::LayerVersion` (see `SharpLayer` in `selection-serverless/template.yaml`) and attached via `Layers:` on the function.
+- **Lambda Layer with `BuildMethod: nodejs22.x`**: `ContentUri` must point to a dir whose root contains `package.json` (NOT `nodejs/package.json`). SAM wraps it as `/opt/nodejs/node_modules/...` itself. Reference: `selection-serverless/layers/sharp/package.json`.
+- **Shared modules + CodeUri**: if multiple handlers import from a common `src/shared/` folder, set `CodeUri: src/` for every function and use `EntryPoints: [<handler-dir>/handler.ts]` + `Handler: <handler-dir>/handler.handler`. SAM only copies the `CodeUri` directory into its esbuild build context — `CodeUri: src/process-image/` would make `../shared/` unresolvable.
+
+### Selection completion gate — DO NOT remove either path
+
+Both `selection-serverless/src/process-image/handler.ts` AND `layers/selection/server/api/selections/[username]/[eventId]/finalize-upload.post.ts` MUST call `tryEnqueueFinalize` — neither alone is sufficient. The Lambda is the last to attempt finalize when `totalPhotos` was written before all images finished; the HTTP endpoint is the last to attempt finalize when all images drained before the browser finished uploading and sent the totals. The conditional `finalizeEnqueued` flip on the Selection row ensures exactly one of them wins. Reasoning is in `selection-knowledge/architecture.md` §6.
+
+## AWS account
+
+- Region: `eu-central-1`
+- Main upload bucket (permanent, shared across gallery/cover/files/selection): `niebieskie-aparaty-client-gallery`
+- DynamoDB table: `niebieskie-aparaty-prod`
+- **Lambda account concurrency limit is 10** (default new-account quota). `ReservedConcurrentExecutions` cannot be set on any function — it would drop UnreservedConcurrentExecutions below the required minimum of 10. Request a quota increase before re-introducing reserved concurrency.
+- `AWS::EarlyValidation::ResourceExistenceCheck` deploy failures mean a named resource (S3 bucket, SQS queue, Lambda, etc.) already exists outside the stack — probe with `aws s3api head-bucket` / `aws sqs get-queue-url` / `aws lambda get-function` before re-running.
 
 ## Database
 
@@ -92,3 +119,4 @@ DynamoDB single-table design. Table name: `niebieskie-aparaty-prod`.
 - Entities: User, Event, GalleryItem, Selection, SelectionItem, File, TenantGallery
 - GSI1: list all users (`ENTITY#USER`); GSI2: look up TenantGallery by eventId (`EVENT#<eventId>`)
 - GSI `IndexName` strings match the field prefix exactly: `'GSI1'`, `'GSI2'`.
+- **DynamoDB `ConditionExpression` does NOT support arithmetic (`+`, `-`).** Comparisons take only paths or values, no expressions. To compare derived quantities (e.g. `success + failed === total`), do the arithmetic in JS using `ReturnValues: 'ALL_NEW'` from the prior atomic `UpdateCommand`, then issue a follow-up conditional UpdateItem that only guards a flag (`attribute_not_exists(x) OR x = :false`). Pattern: `selection-serverless/src/shared/completion.ts` and `layers/selection/server/utils/tryEnqueueFinalize.ts`.

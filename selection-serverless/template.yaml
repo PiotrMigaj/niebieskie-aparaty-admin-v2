@@ -1,0 +1,323 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Selection upload pipeline: S3 originals bucket -> EventBridge -> SQS ->
+  process-image Lambda (sharp/WebP) -> DynamoDB counters -> finalize-selection
+  Lambda (TransactWrite flips Event.selectionAvailable + Selection.isUploaded).
+
+Parameters:
+  MainBucketName:
+    Type: String
+    Description: Existing permanent upload bucket (where WebPs land at {user}/{event}/selection/{name}.webp).
+  DynamoTableName:
+    Type: String
+    Default: niebieskie-aparaty-prod
+    Description: Existing single-table DynamoDB table.
+  OriginalsBucketName:
+    Type: String
+    Default: niebieskie-aparaty-selection-original-images
+    Description: Transient bucket for raw uploads (bucket-wide 24h lifecycle).
+  AdminOrigin:
+    Type: String
+    Default: '*'
+    Description: CORS allowed origin for browser PUTs (set to the admin URL in prod).
+  AlarmEmail:
+    Type: String
+    Description: Email subscribed to the DLQ-depth alarm SNS topic.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures:
+      - arm64
+    Tracing: Active
+    LoggingConfig:
+      LogFormat: JSON
+
+Resources:
+
+  # ---------- S3: transient originals ----------
+
+  OriginalsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref OriginalsBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAllAfter1Day
+            Status: Enabled
+            ExpirationInDays: 1
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT]
+            AllowedOrigins:
+              - !Ref AdminOrigin
+            AllowedHeaders: ['*']
+            ExposedHeaders: [ETag]
+            MaxAge: 3000
+
+  # ---------- SQS: processing + finalize, each with DLQ ----------
+
+  ProcessingDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: selection-processing-dlq
+      MessageRetentionPeriod: 1209600
+
+  ProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: selection-processing
+      VisibilityTimeout: 300
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ProcessingDLQ.Arn
+        maxReceiveCount: 3
+
+  FinalizeDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: selection-finalize-dlq
+      MessageRetentionPeriod: 1209600
+
+  FinalizeQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: selection-finalize
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt FinalizeDLQ.Arn
+        maxReceiveCount: 3
+
+  # Allow EventBridge to deliver to the processing queue
+  ProcessingQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ProcessingQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ProcessingQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt S3ToProcessingRule.Arn
+
+  # ---------- EventBridge: S3 ObjectCreated -> ProcessingQueue ----------
+
+  S3ToProcessingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: selection-originals-object-created
+      Description: Route ObjectCreated events from the originals bucket into the processing queue.
+      EventBusName: default
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref OriginalsBucket
+      Targets:
+        - Id: ProcessingQueueTarget
+          Arn: !GetAtt ProcessingQueue.Arn
+
+  # ---------- Lambda Layer: sharp (Linux arm64) ----------
+
+  SharpLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: selection-sharp
+      Description: sharp + libvips (Linux arm64). Mounted at /opt/nodejs/node_modules/sharp.
+      ContentUri: layers/sharp/
+      CompatibleRuntimes:
+        - nodejs22.x
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: nodejs22.x
+      BuildArchitecture: arm64
+
+  # ---------- Lambda: process-selection-image ----------
+
+  ProcessImageFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: node22
+        Minify: false
+        Sourcemap: true
+        EntryPoints:
+          - process-image/handler.ts
+        External:
+          - sharp
+          - '@aws-sdk/*'
+    Properties:
+      FunctionName: selection-process-image
+      CodeUri: src/
+      Handler: process-image/handler.handler
+      MemorySize: 2048
+      Timeout: 60
+      Layers:
+        - !Ref SharpLayer
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DynamoTableName
+          ORIGINALS_BUCKET: !Ref OriginalsBucket
+          MAIN_BUCKET: !Ref MainBucketName
+          FINALIZE_QUEUE_URL: !Ref FinalizeQueue
+      Events:
+        ProcessingQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ProcessingQueue.Arn
+            BatchSize: 1
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::${OriginalsBucket}/*
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::${MainBucketName}/*/selection/*
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoTableName}
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt FinalizeQueue.Arn
+
+  # ---------- Lambda: finalize-selection ----------
+
+  FinalizeSelectionFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: node22
+        Minify: false
+        Sourcemap: true
+        EntryPoints:
+          - finalize-selection/handler.ts
+        External:
+          - sharp
+          - '@aws-sdk/*'
+    Properties:
+      FunctionName: selection-finalize
+      CodeUri: src/
+      Handler: finalize-selection/handler.handler
+      MemorySize: 512
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DynamoTableName
+          ORIGINALS_BUCKET: !Ref OriginalsBucket
+      Events:
+        FinalizeQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt FinalizeQueue.Arn
+            BatchSize: 1
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:ListBucket
+              Resource: !Sub arn:${AWS::Partition}:s3:::${OriginalsBucket}
+            - Effect: Allow
+              Action:
+                - s3:DeleteObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::${OriginalsBucket}/*
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoTableName}
+
+  # ---------- Alarms ----------
+
+  DLQAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: selection-dlq-alarms
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlarmEmail
+
+  ProcessingDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: selection-processing-dlq-not-empty
+      AlarmDescription: At least one message stuck in the processing DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ProcessingDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref DLQAlarmTopic
+
+  FinalizeDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: selection-finalize-dlq-not-empty
+      AlarmDescription: At least one message stuck in the finalize DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt FinalizeDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref DLQAlarmTopic
+
+Outputs:
+  OriginalsBucketName:
+    Description: Transient originals bucket — feed into NUXT_SELECTION_ORIGINAL_UPLOAD_BUCKET_NAME.
+    Value: !Ref OriginalsBucket
+  ProcessingQueueUrl:
+    Value: !Ref ProcessingQueue
+  ProcessingQueueArn:
+    Value: !GetAtt ProcessingQueue.Arn
+  FinalizeQueueUrl:
+    Description: Finalize queue URL — feed into NUXT_SELECTION_FINALIZE_QUEUE_URL.
+    Value: !Ref FinalizeQueue
+  FinalizeQueueArn:
+    Value: !GetAtt FinalizeQueue.Arn
+  DLQAlarmTopicArn:
+    Value: !Ref DLQAlarmTopic

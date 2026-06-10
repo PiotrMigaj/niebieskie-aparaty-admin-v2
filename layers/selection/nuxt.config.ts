@@ -1,1 +1,6 @@
-export default defineNuxtConfig({})
+export default defineNuxtConfig({
+  runtimeConfig: {
+    selectionOriginalUploadBucketName: '',
+    selectionFinalizeQueueUrl: '',
+  },
+})

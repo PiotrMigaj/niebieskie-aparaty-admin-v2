@@ -1,0 +1,26 @@
+{
+  "name": "selection-serverless",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SAM project for the Selection upload pipeline (process-image + finalize-selection Lambdas).",
+  "scripts": {
+    "build": "npm_config_cpu=arm64 npm_config_os=linux npm_config_libc=glibc sam build",
+    "build:container": "sam build --use-container",
+    "deploy": "sam deploy",
+    "deploy:guided": "sam deploy --guided",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.658.1",
+    "@aws-sdk/client-s3": "^3.658.1",
+    "@aws-sdk/client-sqs": "^3.658.1",
+    "@aws-sdk/lib-dynamodb": "^3.658.1",
+    "sharp": "^0.33.5"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^22.7.4",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.2"
+  }
+}

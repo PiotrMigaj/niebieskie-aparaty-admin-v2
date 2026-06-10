@@ -1,0 +1,17 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "niebieskie-aparaty-selection"
+
+[default.build.parameters]
+use_container = false
+
+[default.deploy.parameters]
+region = "eu-central-1"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "niebieskie-aparaty-selection"
+disable_rollback = true
+parameter_overrides = "MainBucketName=\"niebieskie-aparaty-client-gallery\" DynamoTableName=\"niebieskie-aparaty-prod\" OriginalsBucketName=\"niebieskie-aparaty-selection-original-images\" AdminOrigin=\"*\" AlarmEmail=\"pmigaj@gmail.com\""
+image_repositories = []

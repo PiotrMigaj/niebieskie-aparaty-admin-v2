@@ -1,0 +1,9 @@
+{
+  "name": "sharp-layer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lambda Layer payload — installed at /opt/nodejs/node_modules/sharp inside the Lambda. Built by SAM's nodejs22.x layer builder. The cross-platform npm_config_cpu/os/libc env vars from `pnpm build` ensure the Linux arm64 binary is installed instead of the host's.",
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}

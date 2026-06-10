@@ -6,7 +6,7 @@ const username = route.params.username as string
 const eventId = route.params.eventId as string
 const selectionId = route.params.selectionId as string
 
-const { data, status, error } = useSelection(username, eventId)
+const { data, status, error, refresh } = useSelection(username, eventId)
 
 const s = computed(() => data.value as unknown as Selection | null)
 
@@ -61,13 +61,20 @@ function formatDate(value: string | Date) {
         <h1 class="font-cormorant text-5xl font-light leading-none mb-4">
           {{ s.eventTitle }}
         </h1>
-        <span
-          :class="s.blocked
-            ? 'inline-block px-3 py-1 bg-black text-white text-[9px] tracking-[0.3em] uppercase font-normal'
-            : 'inline-block px-3 py-1 border border-black text-black text-[9px] tracking-[0.3em] uppercase font-normal'"
-        >
-          {{ s.blocked ? 'Blocked' : 'Active' }}
-        </span>
+        <div class="flex items-center gap-4">
+          <span
+            :class="s.blocked
+              ? 'inline-block px-3 py-1 bg-black text-white text-[9px] tracking-[0.3em] uppercase font-normal'
+              : 'inline-block px-3 py-1 border border-black text-black text-[9px] tracking-[0.3em] uppercase font-normal'"
+          >
+            {{ s.blocked ? 'Blocked' : 'Active' }}
+          </span>
+          <UploadSelectionImages
+            :username="username"
+            :event-id="eventId"
+            @uploaded="refresh()"
+          />
+        </div>
       </div>
 
       <div class="border border-gray-100 p-6 mb-6">

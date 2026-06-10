@@ -45,7 +45,7 @@ async function onConfirm() {
           icon="i-lucide-triangle-alert"
           title="Action failed"
           :description="errorMessage"
-          :close="{ onClick: () => errorMessage = null }"
+          :close="{ onClick: () => { errorMessage = null } }"
         />
         <UAlert
           color="error"

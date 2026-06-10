@@ -49,6 +49,10 @@ Do NOT export a function named `hashPassword` from `layers/*/shared/utils/` — 
 Nuxt UI auto-imports composables that may collide with custom names. Confirmed collisions:
 - `useFileUpload` — owned by Nuxt UI's file-upload primitives. Use a different name (e.g. `useMultipartUpload`) for upload composables.
 
+## Layer shared/ exports must be uniquely named across layers
+
+Symbols exported from `layers/*/shared/types/schemas.ts` (and `shared/utils/`) are auto-imported globally by Nuxt. If two layers export the same name (e.g. `UploadUrlsSchema` in both selection and gallery), Nuxt silently keeps one and prints `Duplicated imports "X" ... has been ignored`. Handlers that import via explicit relative path keep working; any code that relies on the global auto-import gets the wrong layer's symbol. Prefix domain-generic names with the layer (`SelectionUploadUrlsSchema`, `GalleryUploadUrlsSchema`).
+
 ## TypeScript gotchas
 
 `layers/*/shared/utils/` files are compiled under the shared tsconfig (`"types": []`). Node.js built-ins (`node:crypto`, `node:util`, `Buffer`) are NOT available there. Keep server-only code in `server/utils/` or avoid Node built-ins in shared utils.
@@ -57,7 +61,7 @@ Types from `layers/*/shared/types.ts` are NOT auto-imported — always import th
 
 The `Event` type in `layers/event/shared/types/types.ts` clashes with the DOM global `Event`. In Vue components, alias it: `import type { Event as AppEvent } from '#layers/event/shared/types/types'` and cast return values through `unknown`: `result as unknown as AppEvent`.
 
-Event layer shared files are nested one level deeper than other layers: `layers/event/shared/types/types.ts` and `layers/event/shared/types/schemas.ts` (not `shared/types.ts` / `shared/schemas.ts`). The selection layer follows the same pattern: `layers/selection/shared/types/types.ts` and `layers/selection/shared/types/schemas.ts`.
+Event layer shared files are nested one level deeper than other layers: `layers/event/shared/types/types.ts` and `layers/event/shared/types/schemas.ts` (not `shared/types.ts` / `shared/schemas.ts`). The selection and gallery layers follow the same pattern: `layers/selection/shared/types/types.ts`, `layers/gallery/shared/types/types.ts`, etc.
 
 Server API handlers in `layers/<name>/server/api/<entity>/` are 3 levels from `shared/` — use `../../../shared/schemas`. Handlers nested one level deeper (e.g., `[username]/handler.ts` or `[username]/[id]/handler.ts`) need one extra `../` per level of nesting.
 
@@ -85,9 +89,13 @@ When a modal is triggered from a UTable cell (where the trigger lives in a `h()`
 
 Optional relation loading: use `?include=<relation>` query param to embed related entities. Example: `GET /api/users/:username?include=events` spreads `events` onto the returned object. Gate with `getQuery(event).include === '<relation>'` and fetch lazily — never fetch relations by default.
 
+## Upload-pipeline progress polling
+
+For selection / gallery / any pipeline that follows the same `totalPhotos`-then-Lambdas pattern, the detail page should poll the GET endpoint only while `totalPhotos != null && !isUploaded`. Gating on `!isUploaded` alone polls forever on idle pre-upload pages (the row exists with `totalPhotos=null` from creation until the browser calls `finalize-upload`). Reference: `isProcessing` computed in `layers/gallery/app/pages/users/[username]/events/[eventId]/gallery/index.vue`.
+
 ## Serverless (SAM)
 
-`selection-serverless/` is a SAM project sibling to `layers/` (NOT part of the Nuxt build). It runs the selection upload pipeline (Lambdas, SQS, transient S3 bucket). See `selection-serverless/README.md` and `selection-knowledge/architecture.md`.
+`selection-serverless/` and `gallery-serverless/` are SAM projects sibling to `layers/` (NOT part of the Nuxt build). `selection-serverless/` runs the selection upload pipeline (Lambdas, SQS, transient S3 bucket — originals deleted after compression). `gallery-serverless/` runs the gallery upload pipeline (Lambdas, SQS, shared S3 bucket — **originals kept permanently**, EventBridge wildcard-filtered to `*/original/*` so the compressed-WebP PUT cannot re-trigger). See `selection-knowledge/architecture.md` for the design that both projects share.
 
 - Build & deploy: `pnpm build && sam deploy` (from `selection-serverless/`). `pnpm build` wraps `sam build` with `npm_config_cpu=arm64 npm_config_os=linux npm_config_libc=glibc` so npm installs sharp's Linux arm64 binary on a macOS host — required because Lambda runs Linux arm64.
 - The Lambdas write to the same DynamoDB table (`niebieskie-aparaty-prod`) using the same PK/SK shapes as the Nuxt repositories. The race-safe completion gate logic is duplicated in `selection-serverless/src/shared/completion.ts` and `layers/selection/server/utils/tryEnqueueFinalize.ts` — keep them in sync.
@@ -99,6 +107,10 @@ Optional relation loading: use `?include=<relation>` query param to embed relate
 ### Selection completion gate — DO NOT remove either path
 
 Both `selection-serverless/src/process-image/handler.ts` AND `layers/selection/server/api/selections/[username]/[eventId]/finalize-upload.post.ts` MUST call `tryEnqueueFinalize` — neither alone is sufficient. The Lambda is the last to attempt finalize when `totalPhotos` was written before all images finished; the HTTP endpoint is the last to attempt finalize when all images drained before the browser finished uploading and sent the totals. The conditional `finalizeEnqueued` flip on the Selection row ensures exactly one of them wins. Reasoning is in `selection-knowledge/architecture.md` §6.
+
+### Gallery completion gate — DO NOT remove either path
+
+Same invariant for the gallery pipeline. Both `gallery-serverless/src/process-image/handler.ts` AND `layers/gallery/server/api/galleries/[username]/[eventId]/finalize-upload.post.ts` MUST call `tryEnqueueFinalizeGallery`. The conditional `finalizeEnqueued` flip is on the Gallery row (`SK = GALLERY#<eventId>`). Keep `gallery-serverless/src/shared/completion.ts` and `layers/gallery/server/utils/tryEnqueueFinalizeGallery.ts` in sync.
 
 ## AWS account
 
@@ -116,7 +128,7 @@ DynamoDB single-table design. Table name: `niebieskie-aparaty-prod`.
 
 - Multi-tenant: `username` is the tenant key (always known from JWT/session)
 - PK pattern: `USER#<username>` for all user-owned entities; `TOKEN#<tokenId>` for public client gallery access
-- Entities: User, Event, GalleryItem, Selection, SelectionItem, File, TenantGallery
+- Entities: User, Event, Gallery, GalleryItem, Selection, SelectionItem, File, TenantGallery
 - GSI1: list all users (`ENTITY#USER`); GSI2: look up TenantGallery by eventId (`EVENT#<eventId>`)
 - GSI `IndexName` strings match the field prefix exactly: `'GSI1'`, `'GSI2'`.
 - **DynamoDB `ConditionExpression` does NOT support arithmetic (`+`, `-`).** Comparisons take only paths or values, no expressions. To compare derived quantities (e.g. `success + failed === total`), do the arithmetic in JS using `ReturnValues: 'ALL_NEW'` from the prior atomic `UpdateCommand`, then issue a follow-up conditional UpdateItem that only guards a flag (`attribute_not_exists(x) OR x = :false`). Pattern: `selection-serverless/src/shared/completion.ts` and `layers/selection/server/utils/tryEnqueueFinalize.ts`.

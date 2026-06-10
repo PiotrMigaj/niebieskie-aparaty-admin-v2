@@ -13,6 +13,8 @@ Feature code lives in `layers/` as self-contained Nuxt layers. All layers under 
 | **user** | User CRUD API, user list + detail pages, AddUser modal | `userRepository`, `User` type, `CreateUserSchema` |
 | **event** | Event CRUD API, event detail page | `eventRepository`, `Event` type, `CreateEventSchema`; `useEvent(username, eventId)` → `{ event, status, error, refresh, createEvent }` |
 | **file**  | File (downloadable asset) CRUD API | `fileRepository`, `File` type, `CreateFileSchema` |
+| **selection** | Selection upload pipeline (Nuxt half), client-pick flow API + pages | `selectionRepository`, `Selection` type, `CreateSelectionSchema`, `tryEnqueueFinalize` |
+| **gallery** | Gallery upload pipeline (Nuxt half), gallery detail page, `CreateGallery` modal | `galleryRepository`, `galleryItemRepository`, `Gallery` / `GalleryItem` types, `CreateGallerySchema`, `tryEnqueueFinalizeGallery`; `useGallery(username, eventId)` |
 
 ## File Structure per Layer
 

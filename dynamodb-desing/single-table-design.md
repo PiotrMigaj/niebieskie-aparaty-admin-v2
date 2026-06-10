@@ -18,7 +18,8 @@ This document proposes a redesign of the current SQL-style DynamoDB schema (sepa
 erDiagram
     USER ||--o{ EVENT : "has many"
     USER ||--|| USER : "identity"
-    EVENT ||--o{ GALLERY_ITEM : "has many"
+    EVENT ||--o| GALLERY : "has one"
+    GALLERY ||--o{ GALLERY_ITEM : "has many"
     EVENT ||--o| SELECTION : "has one"
     SELECTION ||--o{ SELECTION_ITEM : "has many"
     EVENT ||--o{ FILE : "has many (downloads)"
@@ -51,15 +52,34 @@ erDiagram
         string tokenCreatedAt
         int tokenValidDays
     }
-    GALLERY_ITEM {
-        string fileName
+    GALLERY {
+        string galleryId
         string eventId FK
         string username FK
-        string originalFileObjectKey
-        string compressedFileObjectKey
-        int compressedFileWidth
-        int compressedFileHeight
-        string presignDateTime
+        string eventTitle
+        boolean isUploaded
+        int totalPhotos
+        int processedSuccessPhotos
+        int processedFailedPhotos
+        boolean finalizeEnqueued
+        string uploadStartedAt
+        string uploadCompletedAt
+        string createdAt
+        string updatedAt
+    }
+    GALLERY_ITEM {
+        string imageName
+        string eventId FK
+        string username FK
+        string originalFileName
+        string originalObjectKey
+        string webpObjectKey
+        int width
+        int height
+        int compressedSize
+        string status
+        string failureReason
+        string processedAt
     }
     SELECTION {
         string selectionId
@@ -105,7 +125,8 @@ erDiagram
 |:---|:---|:---|:---|
 | User | `USER#<username>` | `#PROFILE` | Fixed SK — protects against accidental `begins_with("USER#")` collection scans |
 | Event | `USER#<username>` | `EVENT#<eventId>` | Lives in the same item collection as the User |
-| Gallery Item | `USER#<username>` | `GALLERY#<eventId>#<fileName>` | Double-prefix enables prefix query scoped to one event |
+| Gallery | `USER#<username>` | `GALLERY#<eventId>` | 1:1 per event — upload-pipeline header (counters, flags) |
+| Gallery Item | `USER#<username>` | `GALLERY_ITEM#<eventId>#<imageName>` | Prefix query returns all items for one event's gallery |
 | Selection | `USER#<username>` | `SELECTION#<eventId>` | 1:1 per event → always GetItem, never Query |
 | Selection Item | `USER#<username>` | `SELECTION_ITEM#<eventId>#<imageName>` | Prefix query returns all items for one event's selection |
 | File | `USER#<username>` | `FILE#<eventId>#<fileId>` | Prefix query scoped to one event |
@@ -122,16 +143,17 @@ An **item collection** is a group of items sharing the same PK, stored together 
 │  SK: #PROFILE                   ← User record (GetItem for profile)             │
 │  SK: EVENT#<uuid-1>             ← Event 1 "Sesja ciążowa"                       │
 │  SK: EVENT#<uuid-2>             ← Event 2 ...                                   │
-│  SK: GALLERY#<uuid-1>#img_1.jpg ← Gallery item (event 1)                        │
-│  SK: GALLERY#<uuid-1>#img_2.jpg ← Gallery item (event 1)                        │
-│  SK: GALLERY#<uuid-2>#img_1.jpg ← Gallery item (event 2)                        │
+│  SK: GALLERY#<uuid-1>           ← Gallery header (event 1)                      │
+│  SK: GALLERY_ITEM#<uuid-1>#IMG_001 ← Gallery item (event 1)                     │
+│  SK: GALLERY_ITEM#<uuid-1>#IMG_002 ← Gallery item (event 1)                     │
+│  SK: GALLERY_ITEM#<uuid-2>#IMG_001 ← Gallery item (event 2)                     │
 │  SK: SELECTION#<uuid-1>         ← Selection header (event 1)                    │
 │  SK: SELECTION_ITEM#<uuid-1>#IMG_001  ← Selection item                          │
 │  SK: SELECTION_ITEM#<uuid-1>#IMG_002  ← Selection item                          │
 │  SK: FILE#<uuid-1>#<file-uuid>  ← Downloadable file (event 1)                  │
 │                                                                                 │
 │  Query: SK begins_with "EVENT#"          → only events, no gallery/files       │
-│  Query: SK begins_with "GALLERY#<uuid-1>#" → only that event's gallery items   │
+│  Query: SK begins_with "GALLERY_ITEM#<uuid-1>#" → only that event's gallery items │
 │  Query: SK begins_with "SELECTION_ITEM#<uuid-1>#" → only that selection items  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
@@ -202,8 +224,9 @@ GSI2PK = EVENT#0c8fe3d3-67c2-4611-ad52-10fa577bcaf4
 | 2 | List all users (admin) | `Query` on **GSI1** | `GSI1PK = ENTITY#USER` |
 | 3 | List all events for user | `Query` | `PK = USER#<username>` AND `SK begins_with EVENT#` |
 | 4 | Get specific event | `GetItem` | `PK = USER#<username>` AND `SK = EVENT#<eventId>` |
-| 5 | List gallery items for event | `Query` | `PK = USER#<username>` AND `SK begins_with GALLERY#<eventId>#` |
-| 6 | Get specific gallery item | `GetItem` | `PK = USER#<username>` AND `SK = GALLERY#<eventId>#<fileName>` |
+| 5a | Get gallery header for event | `GetItem` | `PK = USER#<username>` AND `SK = GALLERY#<eventId>` |
+| 5b | List gallery items for event | `Query` | `PK = USER#<username>` AND `SK begins_with GALLERY_ITEM#<eventId>#` |
+| 6 | Get specific gallery item | `GetItem` | `PK = USER#<username>` AND `SK = GALLERY_ITEM#<eventId>#<imageName>` |
 | 7 | Get selection for event | `GetItem` | `PK = USER#<username>` AND `SK = SELECTION#<eventId>` |
 | 8 | List selection items for event | `Query` | `PK = USER#<username>` AND `SK begins_with SELECTION_ITEM#<eventId>#` |
 | 9 | Toggle a selection item | `UpdateItem` | `PK = USER#<username>` AND `SK = SELECTION_ITEM#<eventId>#<imageName>` |
@@ -268,23 +291,50 @@ GSI2PK = EVENT#0c8fe3d3-67c2-4611-ad52-10fa577bcaf4
 }
 ```
 
+### Gallery *(header, 1:1 per event)*
+```json
+{
+  "PK":          { "S": "USER#oaza_2025" },
+  "SK":          { "S": "GALLERY#be6c6d06-4328-410c-9435-c2a2b0395722" },
+  "entityType":  { "S": "GALLERY" },
+  "galleryId":   { "S": "5cf0f8c1-9c12-4f88-a8b4-2a3c1b5d6e77" },
+  "eventId":     { "S": "be6c6d06-4328-410c-9435-c2a2b0395722" },
+  "username":    { "S": "oaza_2025" },
+  "eventTitle":  { "S": "Sesja plenerowa" },
+  "isUploaded":              { "BOOL": false },
+  "totalPhotos":             { "NULL": true },
+  "processedSuccessPhotos":  { "N": "0" },
+  "processedFailedPhotos":   { "N": "0" },
+  "finalizeEnqueued":        { "BOOL": false },
+  "uploadStartedAt":         { "S": "2026-06-10T12:00:00.000Z" },
+  "uploadCompletedAt":       { "NULL": true },
+  "createdAt":   { "S": "2026-06-10T12:00:00.000Z" },
+  "updatedAt":   { "S": "2026-06-10T12:00:00.000Z" }
+}
+```
+> Mirrors the Selection header (race-safe `finalizeEnqueued` gate + atomic `ADD` counters). No `blocked` / `maxNumberOfPhotos` / `selectedNumberOfPhotos` — those are selection-only (client-pick flow).
+
 ### Gallery Item
 ```json
 {
-  "PK":       { "S": "USER#oaza_2025" },
-  "SK":       { "S": "GALLERY#be6c6d06-4328-410c-9435-c2a2b0395722#IMG_6225.JPG" },
-  "entityType": { "S": "GALLERY_ITEM" },
-  "fileName":  { "S": "IMG_6225.JPG" },
-  "eventId":   { "S": "be6c6d06-4328-410c-9435-c2a2b0395722" },
-  "username":  { "S": "oaza_2025" },
-  "originalFileObjectKey":     { "S": "oaza_2025/be6c6d06-.../images/original/IMG_6225.JPG" },
-  "compressedFileName":        { "S": "IMG_6225.webp" },
-  "compressedFileObjectKey":   { "S": "oaza_2025/be6c6d06-.../images/compressed/IMG_6225.webp" },
-  "compressedFileWidth":       { "S": "2500" },
-  "compressedFileHeight":      { "S": "3750" },
-  "presignDateTime":           { "S": "2026-06-01T02:00:20.722Z" }
+  "PK":          { "S": "USER#oaza_2025" },
+  "SK":          { "S": "GALLERY_ITEM#be6c6d06-4328-410c-9435-c2a2b0395722#IMG_6225" },
+  "entityType":  { "S": "GALLERY_ITEM" },
+  "eventId":     { "S": "be6c6d06-4328-410c-9435-c2a2b0395722" },
+  "username":    { "S": "oaza_2025" },
+  "imageName":   { "S": "IMG_6225" },
+  "originalFileName":  { "S": "IMG_6225.JPG" },
+  "originalObjectKey": { "S": "oaza_2025/be6c6d06-.../original/IMG_6225.JPG" },
+  "webpObjectKey":     { "S": "oaza_2025/be6c6d06-.../compressed/IMG_6225.webp" },
+  "width":           { "N": "2500" },
+  "height":          { "N": "3750" },
+  "compressedSize":  { "N": "1843211" },
+  "status":          { "S": "processed" },
+  "failureReason":   { "NULL": true },
+  "processedAt":     { "S": "2026-06-10T12:01:14.722Z" }
 }
 ```
+> Mirrors the SelectionItem shape. `originalObjectKey` is kept permanently (no transient bucket — originals are downloadable forever). Failed rows still exist with `status: 'failed'` so the UI can show "12 of 1500 failed".
 > Presigned URLs are not stored — they are generated on-demand to avoid stale URLs.
 
 ### Selection
@@ -367,7 +417,8 @@ Presigned URLs expire. Storing them means the stored value becomes invalid after
 |:---|:---|:---|:---|:---|
 | Users | `username` | `USER#<username>` | `#PROFILE` | Add `GSI1PK`, `GSI1SK` |
 | Events | `eventId` | `USER#<username>` | `EVENT#<eventId>` | Remove `tokenId`, `tokenIdCreatedAt`, `tokenIdValidDays` |
-| GalleryItems | `eventId` + `fileName` | `USER#<username>` | `GALLERY#<eventId>#<fileName>` | Remove stored presigned URLs |
+| *(new)* | — | `USER#<username>` | `GALLERY#<eventId>` | Gallery upload-pipeline header (`galleryId`, counters, `finalizeEnqueued`, `isUploaded`, timestamps) |
+| GalleryItems | `eventId` + `fileName` | `USER#<username>` | `GALLERY_ITEM#<eventId>#<imageName>` | Rewritten to mirror SelectionItem: `originalFileName`, `originalObjectKey`, `webpObjectKey`, `width`, `height`, `compressedSize`, `status`, `failureReason`, `processedAt` |
 | Selections | `selectionId` | `USER#<username>` | `SELECTION#<eventId>` | Remove `selectedImages` list; `selectionId` becomes attribute |
 | SelectionItems | `selectionId` + `imageName` | `USER#<username>` | `SELECTION_ITEM#<eventId>#<imageName>` | No change to attributes |
 | Files | `fileId` | `USER#<username>` | `FILE#<eventId>#<fileId>` | No change to attributes |
@@ -382,7 +433,8 @@ graph TD
     subgraph Main Table ["Main Table: niebieskie-aparaty-prod"]
         U["USER#username / #PROFILE<br/>→ User profile"]
         E["USER#username / EVENT#uuid<br/>→ Event"]
-        G["USER#username / GALLERY#eventId#file<br/>→ Gallery Item"]
+        GH["USER#username / GALLERY#eventId<br/>→ Gallery header"]
+        GI["USER#username / GALLERY_ITEM#eventId#name<br/>→ Gallery Item"]
         S["USER#username / SELECTION#eventId<br/>→ Selection"]
         SI["USER#username / SELECTION_ITEM#eventId#name<br/>→ Selection Item"]
         F["USER#username / FILE#eventId#fileId<br/>→ File"]

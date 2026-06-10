@@ -8,6 +8,7 @@ const eventId = route.params.eventId as string
 
 const { event, status, error, refresh } = useEvent(username, eventId, { include: 'files' })
 const { data: selection, status: selectionStatus } = useSelection(username, eventId)
+const { data: gallery, status: galleryStatus } = useGallery(username, eventId)
 
 const files = computed<File[]>(() => (event?.value as any)?.files ?? [])
 
@@ -125,6 +126,18 @@ function formatDate(value: string | Date) {
           >
             {{ e.galleryAvailable ? 'Available' : 'Unavailable' }}
           </span>
+          <div class="mt-4">
+            <div v-if="galleryStatus !== 'success' && galleryStatus !== 'error'" class="h-8" />
+            <UButton
+              v-else-if="gallery"
+              :to="`/users/${username}/events/${eventId}/gallery`"
+              color="neutral"
+              variant="solid"
+              label="View gallery"
+              class="text-[10px] tracking-[0.25em] uppercase"
+            />
+            <CreateGallery v-else :username="username" :event-id="e.eventId" :event-title="e.title" />
+          </div>
         </div>
 
         <div class="border border-black p-6">

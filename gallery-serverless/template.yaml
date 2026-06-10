@@ -1,0 +1,294 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Gallery upload pipeline: single S3 bucket (originals under {user}/{event}/original/,
+  WebPs under {user}/{event}/compressed/) -> EventBridge (wildcard-filtered to */original/*)
+  -> SQS -> process-image Lambda (sharp/WebP) -> DynamoDB counters -> finalize-gallery
+  Lambda (TransactWrite flips Event.galleryAvailable + Gallery.isUploaded).
+  Originals are NEVER deleted — they remain in S3 for client downloads.
+
+Parameters:
+  GalleryBucketName:
+    Type: String
+    Default: niebieskie-aparaty-gallery-images
+    Description: Single shared bucket. Originals at {u}/{e}/original/, WebPs at {u}/{e}/compressed/.
+  DynamoTableName:
+    Type: String
+    Default: niebieskie-aparaty-prod
+    Description: Existing single-table DynamoDB table.
+  AdminOrigin:
+    Type: String
+    Default: '*'
+    Description: CORS allowed origin for browser PUTs (set to the admin URL in prod).
+  AlarmEmail:
+    Type: String
+    Description: Email subscribed to the DLQ-depth alarm SNS topic.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures:
+      - arm64
+    Tracing: Active
+    LoggingConfig:
+      LogFormat: JSON
+
+Resources:
+
+  # ---------- S3: shared gallery bucket (originals + compressed) ----------
+  # The bucket already exists out-of-stack. Enable EventBridge notifications once
+  # after deploy with:
+  #   aws s3api put-bucket-notification-configuration \
+  #     --bucket niebieskie-aparaty-gallery-images \
+  #     --notification-configuration '{"EventBridgeConfiguration":{}}'
+  # CloudFormation can't modify an out-of-stack bucket; do that step manually.
+
+  # ---------- SQS: processing + finalize, each with DLQ ----------
+
+  ProcessingDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: gallery-processing-dlq
+      MessageRetentionPeriod: 1209600
+
+  ProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: gallery-processing
+      VisibilityTimeout: 300
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ProcessingDLQ.Arn
+        maxReceiveCount: 3
+
+  FinalizeDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: gallery-finalize-dlq
+      MessageRetentionPeriod: 1209600
+
+  FinalizeQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: gallery-finalize
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt FinalizeDLQ.Arn
+        maxReceiveCount: 3
+
+  # Allow EventBridge to deliver to the processing queue
+  ProcessingQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ProcessingQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ProcessingQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt S3ToProcessingRule.Arn
+
+  # ---------- EventBridge: S3 ObjectCreated on */original/* -> ProcessingQueue ----------
+
+  S3ToProcessingRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: gallery-originals-object-created
+      Description: Route ObjectCreated events for keys matching */original/* into the processing queue. Keeps the Lambda's own compressed PUT from re-triggering.
+      EventBusName: default
+      EventPattern:
+        source:
+          - aws.s3
+        detail-type:
+          - Object Created
+        detail:
+          bucket:
+            name:
+              - !Ref GalleryBucketName
+          object:
+            key:
+              - wildcard: '*/original/*'
+      Targets:
+        - Id: ProcessingQueueTarget
+          Arn: !GetAtt ProcessingQueue.Arn
+
+  # ---------- Lambda Layer: sharp (Linux arm64) ----------
+
+  SharpLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: gallery-sharp
+      Description: sharp + libvips (Linux arm64). Mounted at /opt/nodejs/node_modules/sharp.
+      ContentUri: layers/sharp/
+      CompatibleRuntimes:
+        - nodejs22.x
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: nodejs22.x
+      BuildArchitecture: arm64
+
+  # ---------- Lambda: process-gallery-image ----------
+
+  ProcessImageFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: node22
+        Minify: false
+        Sourcemap: true
+        EntryPoints:
+          - process-image/handler.ts
+        External:
+          - sharp
+          - '@aws-sdk/*'
+    Properties:
+      FunctionName: gallery-process-image
+      CodeUri: src/
+      Handler: process-image/handler.handler
+      MemorySize: 2048
+      Timeout: 60
+      Layers:
+        - !Ref SharpLayer
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DynamoTableName
+          GALLERY_BUCKET: !Ref GalleryBucketName
+          FINALIZE_QUEUE_URL: !Ref FinalizeQueue
+      Events:
+        ProcessingQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ProcessingQueue.Arn
+            BatchSize: 1
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::${GalleryBucketName}/*/original/*
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+              Resource: !Sub arn:${AWS::Partition}:s3:::${GalleryBucketName}/*/compressed/*
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoTableName}
+            - Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt FinalizeQueue.Arn
+
+  # ---------- Lambda: finalize-gallery ----------
+
+  FinalizeGalleryFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: node22
+        Minify: false
+        Sourcemap: true
+        EntryPoints:
+          - finalize-gallery/handler.ts
+        External:
+          - sharp
+          - '@aws-sdk/*'
+    Properties:
+      FunctionName: gallery-finalize
+      CodeUri: src/
+      Handler: finalize-gallery/handler.handler
+      MemorySize: 512
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DynamoTableName
+      Events:
+        FinalizeQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt FinalizeQueue.Arn
+            BatchSize: 1
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+                - dynamodb:TransactWriteItems
+              Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoTableName}
+
+  # ---------- Alarms ----------
+
+  DLQAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: gallery-dlq-alarms
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlarmEmail
+
+  ProcessingDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: gallery-processing-dlq-not-empty
+      AlarmDescription: At least one message stuck in the processing DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ProcessingDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref DLQAlarmTopic
+
+  FinalizeDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: gallery-finalize-dlq-not-empty
+      AlarmDescription: At least one message stuck in the finalize DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt FinalizeDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref DLQAlarmTopic
+
+Outputs:
+  GalleryBucketName:
+    Description: Shared gallery bucket — same as NUXT_GALLERY_UPLOAD_BUCKET_NAME.
+    Value: !Ref GalleryBucketName
+  ProcessingQueueUrl:
+    Value: !Ref ProcessingQueue
+  ProcessingQueueArn:
+    Value: !GetAtt ProcessingQueue.Arn
+  FinalizeQueueUrl:
+    Description: Finalize queue URL — feed into NUXT_GALLERY_FINALIZE_QUEUE_URL.
+    Value: !Ref FinalizeQueue
+  FinalizeQueueArn:
+    Value: !GetAtt FinalizeQueue.Arn
+  DLQAlarmTopicArn:
+    Value: !Ref DLQAlarmTopic

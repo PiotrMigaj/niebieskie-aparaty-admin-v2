@@ -16,20 +16,27 @@ const items = computed<GalleryItem[]>(() => g.value?.items ?? [])
 
 const UBadge = resolveComponent('UBadge')
 
-let pollHandle: ReturnType<typeof setInterval> | null = null
+let es: EventSource | null = null
 
-function stopPolling() {
-  if (pollHandle != null) {
-    clearInterval(pollHandle)
-    pollHandle = null
+function closeStream() {
+  if (es != null) {
+    es.close()
+    es = null
   }
 }
 
-function startPolling() {
-  if (pollHandle != null) return
-  pollHandle = setInterval(() => {
-    refresh()
-  }, 3000)
+function openStream() {
+  if (es != null || !import.meta.client) return
+  es = new EventSource(`/api/galleries/${username}/${eventId}/stream`)
+  es.addEventListener('gallery', (ev) => {
+    data.value = JSON.parse((ev as MessageEvent).data) as GalleryWithItems
+  })
+  es.addEventListener('not-found', () => {
+    closeStream()
+  })
+  es.addEventListener('error', () => {
+    closeStream()
+  })
 }
 
 const isProcessing = computed(
@@ -39,13 +46,13 @@ const isProcessing = computed(
 watch(
   isProcessing,
   (active) => {
-    if (active) startPolling()
-    else stopPolling()
+    if (active) openStream()
+    else closeStream()
   },
   { immediate: true },
 )
 
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(closeStream)
 
 function formatDate(value: string | Date | null) {
   if (!value) return '—'

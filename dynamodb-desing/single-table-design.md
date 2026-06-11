@@ -355,6 +355,7 @@ GSI2PK = EVENT#0c8fe3d3-67c2-4611-ad52-10fa577bcaf4
 }
 ```
 > `selectedImages` list attribute **removed** — count stays; full selection state is derived from individual `SelectionItem` records, avoiding the 400KB item size limit risk.
+> **Note (2026-06-11):** Selection used to mirror the Gallery header (`isUploaded`, `totalPhotos`, `processedSuccessPhotos`, `processedFailedPhotos`, `finalizeEnqueued`, `uploadStartedAt`, `uploadCompletedAt`) when uploads went through the Lambda pipeline in `selection-serverless/`. Those attributes were dropped after the photographer moved compression + watermarking client-side — the row now only stores metadata, and `Event.selectionAvailable` is flipped in the same TransactWrite that creates the Selection. See `selection-knowledge/architecture.md` §0 for the current flow.
 
 ### Selection Item
 ```json
@@ -406,7 +407,11 @@ The token is the client's entry point — they have a URL like `/gallery/<tokenI
 ### 4. Why TenantGallery SK = `EVENT#<eventId>` and not `#METADATA`
 The SK encodes the relationship, making the record self-describing. It also positions the design for future extension: if an event ever needs multiple token configurations (e.g., a photographer token vs. a client preview token), the SK would differentiate them. The GSI2 inverted index lets the admin panel do `eventId → token` lookup without knowing the tokenId upfront.
 
-### 5. Why presigned URLs are not stored on Gallery Items
+### 5. Why Selection has no upload-progress fields
+
+The Selection row used to mirror the Gallery header — counters (`processedSuccessPhotos`, `processedFailedPhotos`), totals (`totalPhotos`), a `finalizeEnqueued` gate, and timestamps. Those existed because uploads ran through a distributed Lambda pipeline that needed a per-batch progress record to coordinate idempotent counter bumps and a race-safe "we are done" handshake. After the photographer moved compression and watermarking to their own machine (2026-06-11), the pipeline was retired: the browser uploads finished bytes directly to the main bucket, and the server writes all `SelectionItem` rows + the `Selection` row + flips `Event.selectionAvailable = true` in one HTTP request (BatchWrite for items, TransactWrite for the row + event flag). With no asynchronous processing in the loop, there is nothing to coordinate, so the row only stores metadata.
+
+### 6. Why presigned URLs are not stored on Gallery Items
 Presigned URLs expire. Storing them means the stored value becomes invalid after `X-Amz-Expires` (currently 7 days). Every re-fetch must either regenerate the URL or serve a stale one. The pattern: store only `objectKey` + `presignDateTime` (for cache invalidation awareness), generate presigned URLs server-side at request time.
 
 ---
@@ -419,8 +424,8 @@ Presigned URLs expire. Storing them means the stored value becomes invalid after
 | Events | `eventId` | `USER#<username>` | `EVENT#<eventId>` | Remove `tokenId`, `tokenIdCreatedAt`, `tokenIdValidDays` |
 | *(new)* | — | `USER#<username>` | `GALLERY#<eventId>` | Gallery upload-pipeline header (`galleryId`, counters, `finalizeEnqueued`, `isUploaded`, timestamps) |
 | GalleryItems | `eventId` + `fileName` | `USER#<username>` | `GALLERY_ITEM#<eventId>#<imageName>` | Rewritten to mirror SelectionItem: `originalFileName`, `originalObjectKey`, `webpObjectKey`, `width`, `height`, `compressedSize`, `status`, `failureReason`, `processedAt` |
-| Selections | `selectionId` | `USER#<username>` | `SELECTION#<eventId>` | Remove `selectedImages` list; `selectionId` becomes attribute |
-| SelectionItems | `selectionId` + `imageName` | `USER#<username>` | `SELECTION_ITEM#<eventId>#<imageName>` | No change to attributes |
+| Selections | `selectionId` | `USER#<username>` | `SELECTION#<eventId>` | Remove `selectedImages` list; `selectionId` becomes attribute; **also (2026-06-11)** drop all upload-pipeline attributes (`isUploaded`, `totalPhotos`, `processedSuccessPhotos`, `processedFailedPhotos`, `finalizeEnqueued`, `uploadStartedAt`, `uploadCompletedAt`) — Selection is created only after all uploads complete, in a TransactWrite that also flips `Event.selectionAvailable = true` |
+| SelectionItems | `selectionId` + `imageName` | `USER#<username>` | `SELECTION_ITEM#<eventId>#<imageName>` | No change to attributes (`presignedUrlTimestamp` was never persisted by the new flow — presigned URLs are generated on demand) |
 | Files | `fileId` | `USER#<username>` | `FILE#<eventId>#<fileId>` | No change to attributes |
 | *(new)* | — | `TOKEN#<tokenId>` | `EVENT#<eventId>` | `tokenId`, `tokenCreatedAt`, `tokenValidDays`, `eventId`, `username`, `GSI2PK`, `GSI2SK` |
 

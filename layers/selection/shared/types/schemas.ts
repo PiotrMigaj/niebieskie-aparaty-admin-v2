@@ -1,5 +1,11 @@
 import { z } from 'zod'
 
+const SelectionItemInputSchema = z.object({
+  originalFileName: z.string().min(1),
+  imageWidth: z.number().int().min(0),
+  imageHeight: z.number().int().min(0),
+})
+
 export const CreateSelectionSchema = z.object({
   username: z.string().min(1, { message: 'Username is required' }),
   eventId: z.string().min(1),
@@ -9,11 +15,13 @@ export const CreateSelectionSchema = z.object({
     .int({ message: 'Must be a whole number' })
     .min(1, { message: 'Must be at least 1' })
     .max(1000, { message: 'Cannot exceed 1000' }),
+  items: z.array(SelectionItemInputSchema).min(1).max(1000),
 })
 
 export type CreateSelectionInput = z.infer<typeof CreateSelectionSchema>
+export type SelectionItemInput = z.infer<typeof SelectionItemInputSchema>
 
-export const UploadUrlsSchema = z.object({
+export const SelectionUploadUrlsSchema = z.object({
   files: z
     .array(
       z.object({
@@ -26,10 +34,4 @@ export const UploadUrlsSchema = z.object({
     .max(2000),
 })
 
-export type UploadUrlsInput = z.infer<typeof UploadUrlsSchema>
-
-export const FinalizeUploadSchema = z.object({
-  totalPhotos: z.number().int().min(0),
-})
-
-export type FinalizeUploadInput = z.infer<typeof FinalizeUploadSchema>
+export type SelectionUploadUrlsInput = z.infer<typeof SelectionUploadUrlsSchema>

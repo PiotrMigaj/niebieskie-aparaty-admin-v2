@@ -1,34 +1,35 @@
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import { UploadUrlsSchema } from '../../../../../shared/types/schemas'
-import { selectionRepository } from '../../../../repository/selectionRepository'
+import { SelectionUploadUrlsSchema } from '../../../../../shared/types/schemas'
+import { eventRepository } from '#layers/event/server/repository/eventRepository'
 
 export default defineEventHandler(async (event) => {
   const username = getRouterParam(event, 'username')!
   const eventId = getRouterParam(event, 'eventId')!
 
-  const body = await readValidatedBody(event, (b) => UploadUrlsSchema.parse(b))
+  const body = await readValidatedBody(event, (b) => SelectionUploadUrlsSchema.parse(b))
 
-  const selection = await selectionRepository.findByUsernameAndEventId(username, eventId)
-  if (!selection) throw createError({ statusCode: 404, message: 'Selection not found' })
+  const existingEvent = await eventRepository.findByUsernameAndEventId(username, eventId)
+  if (!existingEvent) throw createError({ statusCode: 404, message: 'Event not found' })
 
-  const { selectionOriginalUploadBucketName } = useRuntimeConfig()
+  const { uploadBucketName } = useRuntimeConfig()
 
   const urls = await Promise.all(
     body.files.map(async ({ filename, contentType }) => {
-      const safeName = filename.replace(/^.*[\\/]/, '').replace(/[^\w.-]/g, '_')
-      if (!safeName || safeName.startsWith('.')) {
+      const safeName = toSelectionSafeName(filename)
+      if (!safeName) {
         throw createError({ statusCode: 400, message: `Invalid filename: ${filename}` })
       }
+      const objectKey = toSelectionObjectKey(username, eventId, safeName)
       const url = await getSignedUrl(
         getS3(),
         new PutObjectCommand({
-          Bucket: selectionOriginalUploadBucketName,
-          Key: `${username}/${eventId}/${safeName}`,
+          Bucket: uploadBucketName,
+          Key: objectKey,
           ContentType: contentType,
         }),
         { expiresIn: 900 },
       )
-      return { filename, url }
+      return { filename, url, objectKey }
     }),
   )
 

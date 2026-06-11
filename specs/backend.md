@@ -117,7 +117,7 @@ No import statement needed for any of these:
 
 - `hashPassword`, `verifyPassword`, `passwordNeedsReHash` — from `nuxt-auth-utils`
 - `getDynamoDb()`, `TABLE_NAME` — from `layers/base/server/utils/dynamoDb.ts`
-- `PutCommand`, `QueryCommand`, `GetCommand`, `DeleteCommand`, `UpdateCommand`, `TransactWriteCommand` — re-exported from base layer
+- `PutCommand`, `QueryCommand`, `GetCommand`, `DeleteCommand`, `UpdateCommand`, `TransactWriteCommand`, `BatchWriteCommand` — re-exported from base layer
 - All utilities exported from `layers/*/shared/utils/`
 - `isError(e)` — H3 built-in; returns `true` if `e` is already an H3Error. Use in `catch` blocks as `if (isError(e)) throw e` so `createError()` thrown inside a repository propagates correctly instead of being wrapped in a generic 500.
 

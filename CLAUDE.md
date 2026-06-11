@@ -89,24 +89,30 @@ When a modal is triggered from a UTable cell (where the trigger lives in a `h()`
 
 Optional relation loading: use `?include=<relation>` query param to embed related entities. Example: `GET /api/users/:username?include=events` spreads `events` onto the returned object. Gate with `getQuery(event).include === '<relation>'` and fetch lazily — never fetch relations by default.
 
+## Server-derived object keys
+
+Never accept S3 `objectKey` from the client in write endpoints — it's an IDOR (an authenticated user can write rows pointing into another user's bucket prefix). Derive `objectKey` server-side from URL params + filename. When a presign endpoint and a later write endpoint both compute the same key, extract the derivation into a single `shared/utils/` helper so they can't drift. Reference: `layers/selection/shared/utils/selectionKey.ts` is shared by `upload-urls.post.ts` and `index.post.ts`.
+
+## DynamoDB batch + transaction limits
+
+`BatchWriteCommand` accepts max 25 PutRequests/table per call — chunk in JS. `TransactWriteCommand` accepts max 100 items total. For "write N children + create parent + flip sibling flag" atomically when N can exceed ~99: BatchWrite the children first, then one 2-item `TransactWriteCommand` for the parent (`Put` guarded by `attribute_not_exists(PK)`) + the sibling `Update`. Crash window between BatchWrite and TransactWrite leaves orphan children but no parent — retry overwrites them. Reference: `layers/selection/server/api/selections/index.post.ts`.
+
 ## Upload-pipeline progress polling
 
-For selection / gallery / any pipeline that follows the same `totalPhotos`-then-Lambdas pattern, the detail page should poll the GET endpoint only while `totalPhotos != null && !isUploaded`. Gating on `!isUploaded` alone polls forever on idle pre-upload pages (the row exists with `totalPhotos=null` from creation until the browser calls `finalize-upload`). Reference: `isProcessing` computed in `layers/gallery/app/pages/users/[username]/events/[eventId]/gallery/index.vue`.
+For the gallery upload pipeline (`totalPhotos`-then-Lambdas pattern), the detail page should poll the GET endpoint only while `totalPhotos != null && !isUploaded`. Gating on `!isUploaded` alone polls forever on idle pre-upload pages (the row exists with `totalPhotos=null` from creation until the browser calls `finalize-upload`). Reference: `isProcessing` computed in `layers/gallery/app/pages/users/[username]/events/[eventId]/gallery/index.vue`. The **selection** flow no longer uses this pattern — see "Serverless (SAM)" below.
 
 ## Serverless (SAM)
 
-`selection-serverless/` and `gallery-serverless/` are SAM projects sibling to `layers/` (NOT part of the Nuxt build). `selection-serverless/` runs the selection upload pipeline (Lambdas, SQS, transient S3 bucket — originals deleted after compression). `gallery-serverless/` runs the gallery upload pipeline (Lambdas, SQS, shared S3 bucket — **originals kept permanently**, EventBridge wildcard-filtered to `*/original/*` so the compressed-WebP PUT cannot re-trigger). See `selection-knowledge/architecture.md` for the design that both projects share.
+`gallery-serverless/` is a SAM project sibling to `layers/` (NOT part of the Nuxt build). It runs the gallery upload pipeline (Lambdas, SQS, shared S3 bucket — **originals kept permanently**, EventBridge wildcard-filtered to `*/original/*` so the compressed-WebP PUT cannot re-trigger).
 
-- Build & deploy: `pnpm build && sam deploy` (from `selection-serverless/`). `pnpm build` wraps `sam build` with `npm_config_cpu=arm64 npm_config_os=linux npm_config_libc=glibc` so npm installs sharp's Linux arm64 binary on a macOS host — required because Lambda runs Linux arm64.
-- The Lambdas write to the same DynamoDB table (`niebieskie-aparaty-prod`) using the same PK/SK shapes as the Nuxt repositories. The race-safe completion gate logic is duplicated in `selection-serverless/src/shared/completion.ts` and `layers/selection/server/utils/tryEnqueueFinalize.ts` — keep them in sync.
+`selection-serverless/` exists in the repo but is **retired** — the selection upload pipeline was superseded (2026-06-11) when the photographer moved compression + watermarking client-side. The stack has been shut down via AWS SAM; the folder is kept as historical reference (don't deploy it, don't extend it). The current selection flow lives entirely in `layers/selection/` and is described in `selection-knowledge/architecture.md` §0 and `selection-knowledge/how-it-works.md` §0.
+
+- Build & deploy (gallery): `pnpm build && sam deploy` (from `gallery-serverless/`). `pnpm build` wraps `sam build` with `npm_config_cpu=arm64 npm_config_os=linux npm_config_libc=glibc` so npm installs sharp's Linux arm64 binary on a macOS host — required because Lambda runs Linux arm64.
+- The Lambdas write to the same DynamoDB table (`niebieskie-aparaty-prod`) using the same PK/SK shapes as the Nuxt repositories.
 - Each `AWS::Serverless::Function` has a `Metadata: BuildMethod: esbuild` block with `External: [sharp, '@aws-sdk/*']`. No separate esbuild config file.
-- **External deps need a Lambda Layer, not just `External:` in BuildProperties.** SAM's `nodejs-npm-esbuild` builder produces only the bundled JS — it does NOT ship `node_modules` for anything listed in `External`. Native modules like `sharp` must be packaged as an `AWS::Serverless::LayerVersion` (see `SharpLayer` in `selection-serverless/template.yaml`) and attached via `Layers:` on the function.
-- **Lambda Layer with `BuildMethod: nodejs22.x`**: `ContentUri` must point to a dir whose root contains `package.json` (NOT `nodejs/package.json`). SAM wraps it as `/opt/nodejs/node_modules/...` itself. Reference: `selection-serverless/layers/sharp/package.json`.
+- **External deps need a Lambda Layer, not just `External:` in BuildProperties.** SAM's `nodejs-npm-esbuild` builder produces only the bundled JS — it does NOT ship `node_modules` for anything listed in `External`. Native modules like `sharp` must be packaged as an `AWS::Serverless::LayerVersion` and attached via `Layers:` on the function.
+- **Lambda Layer with `BuildMethod: nodejs22.x`**: `ContentUri` must point to a dir whose root contains `package.json` (NOT `nodejs/package.json`). SAM wraps it as `/opt/nodejs/node_modules/...` itself.
 - **Shared modules + CodeUri**: if multiple handlers import from a common `src/shared/` folder, set `CodeUri: src/` for every function and use `EntryPoints: [<handler-dir>/handler.ts]` + `Handler: <handler-dir>/handler.handler`. SAM only copies the `CodeUri` directory into its esbuild build context — `CodeUri: src/process-image/` would make `../shared/` unresolvable.
-
-### Selection completion gate — DO NOT remove either path
-
-Both `selection-serverless/src/process-image/handler.ts` AND `layers/selection/server/api/selections/[username]/[eventId]/finalize-upload.post.ts` MUST call `tryEnqueueFinalize` — neither alone is sufficient. The Lambda is the last to attempt finalize when `totalPhotos` was written before all images finished; the HTTP endpoint is the last to attempt finalize when all images drained before the browser finished uploading and sent the totals. The conditional `finalizeEnqueued` flip on the Selection row ensures exactly one of them wins. Reasoning is in `selection-knowledge/architecture.md` §6.
 
 ### Gallery completion gate — DO NOT remove either path
 
@@ -131,4 +137,4 @@ DynamoDB single-table design. Table name: `niebieskie-aparaty-prod`.
 - Entities: User, Event, Gallery, GalleryItem, Selection, SelectionItem, File, TenantGallery
 - GSI1: list all users (`ENTITY#USER`); GSI2: look up TenantGallery by eventId (`EVENT#<eventId>`)
 - GSI `IndexName` strings match the field prefix exactly: `'GSI1'`, `'GSI2'`.
-- **DynamoDB `ConditionExpression` does NOT support arithmetic (`+`, `-`).** Comparisons take only paths or values, no expressions. To compare derived quantities (e.g. `success + failed === total`), do the arithmetic in JS using `ReturnValues: 'ALL_NEW'` from the prior atomic `UpdateCommand`, then issue a follow-up conditional UpdateItem that only guards a flag (`attribute_not_exists(x) OR x = :false`). Pattern: `selection-serverless/src/shared/completion.ts` and `layers/selection/server/utils/tryEnqueueFinalize.ts`.
+- **DynamoDB `ConditionExpression` does NOT support arithmetic (`+`, `-`).** Comparisons take only paths or values, no expressions. To compare derived quantities (e.g. `success + failed === total`), do the arithmetic in JS using `ReturnValues: 'ALL_NEW'` from the prior atomic `UpdateCommand`, then issue a follow-up conditional UpdateItem that only guards a flag (`attribute_not_exists(x) OR x = :false`). Pattern: `gallery-serverless/src/shared/completion.ts` and `layers/gallery/server/utils/tryEnqueueFinalizeGallery.ts`.

@@ -8,6 +8,7 @@ export {
   QueryCommand,
   UpdateCommand,
   TransactWriteCommand,
+  BatchWriteCommand,
 } from '@aws-sdk/lib-dynamodb'
 
 export const TABLE_NAME = 'niebieskie-aparaty-prod'

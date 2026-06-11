@@ -6,12 +6,17 @@ export interface Selection {
   blocked: boolean
   maxNumberOfPhotos: number
   selectedNumberOfPhotos: number
-  isUploaded: boolean
-  totalPhotos: number | null
-  processedSuccessPhotos: number
-  processedFailedPhotos: number
-  uploadStartedAt: string | null
-  uploadCompletedAt: string | null
   createdAt: Date
   updatedAt: Date
+}
+
+export interface SelectionItem {
+  imageName: string
+  selectionId: string
+  eventId: string
+  username: string
+  objectKey: string
+  imageWidth: number
+  imageHeight: number
+  selected: boolean
 }

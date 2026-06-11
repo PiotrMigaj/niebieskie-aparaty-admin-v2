@@ -33,6 +33,7 @@ Here is the exact DynamoDB operation and Key Condition Expression required for e
     * **Condition:** `PK = USER#<username>` AND `SK = EVENT#<event_uuid>`
 
 ### 3. Selections
+> Selection now stores only metadata (no upload-progress fields, no race-safe gate) — see `single-table-design.md` §5 "Why Selection has no upload-progress fields" for rationale.
 * **Find selection for an event (Return ONLY the Selection, no items)**
     * **Operation:** `GetItem`
     * **Condition:** `PK = USER#<username>` AND `SK = SELECTION#<event_uuid>`

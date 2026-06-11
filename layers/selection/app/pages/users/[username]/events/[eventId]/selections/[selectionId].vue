@@ -6,7 +6,7 @@ const username = route.params.username as string
 const eventId = route.params.eventId as string
 const selectionId = route.params.selectionId as string
 
-const { data, status, error, refresh } = useSelection(username, eventId)
+const { data, status, error } = useSelection(username, eventId)
 
 const s = computed(() => data.value as unknown as Selection | null)
 
@@ -69,11 +69,6 @@ function formatDate(value: string | Date) {
           >
             {{ s.blocked ? 'Blocked' : 'Active' }}
           </span>
-          <UploadSelectionImages
-            :username="username"
-            :event-id="eventId"
-            @uploaded="refresh()"
-          />
         </div>
       </div>
 

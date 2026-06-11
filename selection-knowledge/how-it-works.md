@@ -1,5 +1,31 @@
 # How the selection upload pipeline works
 
+> **Current flow (in use, 2026-06-11): simplified.** The photographer compresses + watermarks images on their machine; the admin panel only uploads the finished bytes and writes DB rows. See §0 below for the short walkthrough.
+> Sections §1 onward describe the original distributed-Lambda pipeline. **Historical — superseded.** Left in place for context (and to explain why `selection-serverless/` is in the repo).
+
+---
+
+## 0. Current flow (one paragraph + five steps)
+
+A photographer prepares the selection on their own machine — they compress and watermark each photo to a small JPEG/WebP before opening the admin panel. The admin then runs one combined "Create selection" modal that uploads every prepared file to the main bucket and writes all DB rows in a single round-trip. No AWS-side processing, no polling, no DLQ.
+
+1. **Browser** opens the Create Selection modal, takes `maxNumberOfPhotos` + a set of files. For each file the browser reads pixel dimensions client-side via `new Image()`.
+2. **Browser → Nuxt** `POST /api/selections/:u/:e/upload-urls` → returns one presigned PUT per file, all targeting `niebieskie-aparaty-client-gallery/{u}/{e}/selection/<filename>`. The Selection row does **not** exist yet.
+3. **Browser → S3** PUTs every file (4-worker XHR pool with progress).
+4. **Browser → Nuxt** `POST /api/selections` with `{ username, eventId, eventTitle, maxNumberOfPhotos, items: [{ imageName, objectKey, imageWidth, imageHeight }] }`. Server:
+   - `BatchWrite`s the SelectionItem rows (chunks of 25 — DynamoDB BatchWrite max),
+   - then one `TransactWrite` does `Put SELECTION` (guarded by `attribute_not_exists(PK)`) + `Update EVENT.selectionAvailable = true`.
+5. **Browser** navigates to the selection detail page. Done.
+
+That's it. There is no polling, no completion gate, no Lambdas, no DLQ. Failure recovery: if any individual PUT fails, the modal shows it and prevents the create call; if the user retries, S3 PUTs overwrite + BatchWrite overwrites + the transactional Put either succeeds (no prior Selection) or fails with 409 (already exists).
+
+### Why this replaced the old pipeline
+
+The photographer asked to handle compression + watermarking client-side so they could control output quality and watermark style without redeploying Lambdas. That removed every reason for the distributed pipeline below: no need for sharp, no need for SQS, no need for the race-safe completion gate. The remaining work is small enough to do server-side in a single request.
+
+---
+
+> **Status (historical sections below): superseded by §0 above.** Original intro:
 > A plain-English walkthrough of the same system that `architecture.md` specifies. Read this when you want to *understand* it; read `architecture.md` when you want IAM policies, table shapes, or alarm thresholds.
 
 ## 1. What this pipeline does, in one paragraph

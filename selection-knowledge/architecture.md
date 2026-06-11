@@ -1,6 +1,77 @@
 # Selection Upload Pipeline — Architecture
 
-> Status: design doc, not yet implemented. Supersedes `gemini-proposal.md` (kept for reference).
+> **Current flow (in use, 2026-06-11):** simplified — photographer compresses + watermarks images on their machine, uploads compressed files directly to the main bucket, server writes all DB rows in one shot. See §0 below.
+> **Sections §1 onward are historical** — they describe the original distributed Lambda pipeline that was superseded once the photographer moved compression + watermarking client-side. Kept for context (explains why `selection-serverless/` exists).
+
+---
+
+## 0. Current flow (simplified)
+
+### Overview
+
+The photographer compresses and watermarks each image locally before uploading. The admin panel just shuttles already-final bytes into the main upload bucket and records DB rows. No AWS-side image processing, no transient bucket, no SQS queues, no completion gate, no progress polling.
+
+```
+┌─────────────────┐  1. open CreateSelection modal                ┌──────────────────┐
+│  Nuxt browser   │                                                │  Nuxt server     │
+│  (photographer) │  2. POST /api/selections/:u/:e/upload-urls    │                  │
+│                 │ ──────────────────────────────────────────────▶│  presigned PUTs  │
+│                 │◀───────────────────────────────────────────────│  (1 per file)    │
+│                 │                                                 │                  │
+│                 │  3. PUT each file directly to S3 (XHR + progress)                 │
+│                 │ ──────────────────────────────────────────────▶  niebieskie-aparaty-client-gallery
+│                 │                                                   {u}/{e}/selection/{name}
+│                 │                                                 │                  │
+│                 │  4. POST /api/selections with items[] + maxPhotos                 │
+│                 │ ──────────────────────────────────────────────▶│  BatchWrite      │
+│                 │                                                 │   SelectionItems │
+│                 │                                                 │  TransactWrite:  │
+│                 │                                                 │   Put Selection  │
+│                 │                                                 │   Set Event.     │
+│                 │                                                 │   selectionAvail │
+│                 │◀───────────────────────────────────────────────│   = true         │
+│                 │                                                 └──────────────────┘
+└─────────────────┘
+```
+
+### Sequence
+
+| # | Actor | Action |
+|---|-------|--------|
+| 1 | Browser | Photographer opens "Create selection" modal, picks `maxNumberOfPhotos`, drag-drops the already-compressed-and-watermarked files. |
+| 2 | Browser → Nuxt server | `POST /api/selections/:username/:eventId/upload-urls` with `{ files: [{ filename, contentType, size }] }`. Server returns `[{ filename, url, objectKey }]` — presigned PUT URLs (TTL 15 min) targeting `niebieskie-aparaty-client-gallery/{username}/{eventId}/selection/<safeName>`. No DB writes at this step; the Selection does not exist yet. |
+| 3 | Browser → S3 | 4-worker XHR concurrency pool. `xhr.upload.onprogress` drives a per-file + overall progress bar. Browser also reads pixel dimensions via `new Image()` for each file. |
+| 4 | Browser → Nuxt server | `POST /api/selections` with `{ username, eventId, eventTitle, maxNumberOfPhotos, items: [{ imageName, objectKey, imageWidth, imageHeight }] }`. Server (a) `BatchWrite`s all `SELECTION_ITEM` rows (chunked at 25 — DynamoDB's BatchWrite limit), then (b) one `TransactWrite` does `Put SELECTION` (with `attribute_not_exists(PK)` to block duplicates) + `Update EVENT.selectionAvailable = true`. |
+| 5 | Browser | On success, navigates to the selection detail page. Done — no polling needed. |
+
+### Data model
+
+Selection (slim):
+- `selectionId`, `eventId`, `username`, `eventTitle`, `blocked`, `maxNumberOfPhotos`, `selectedNumberOfPhotos`, `createdAt`, `updatedAt`.
+- **Dropped** (relative to §3 below): `isUploaded`, `totalPhotos`, `processedSuccessPhotos`, `processedFailedPhotos`, `finalizeEnqueued`, `uploadStartedAt`, `uploadCompletedAt`.
+
+SelectionItem (per uploaded image):
+- `imageName`, `selectionId`, `eventId`, `username`, `objectKey`, `imageWidth`, `imageHeight`, `selected: false`.
+
+### Failure handling
+
+- **One file's PUT fails** — modal surfaces "N files failed", the user removes them or retries. The `POST /api/selections` call is gated on zero failures, so a partial set is never persisted.
+- **Browser closes mid-upload** — S3 objects may be left behind under `{username}/{eventId}/selection/`. No Selection row exists, so a fresh attempt is unaffected. Stale objects are orphaned (no lifecycle rule on the main bucket — same as gallery's behavior).
+- **DB write race** — the `attribute_not_exists(PK)` guard on the Selection `Put` inside the transaction returns 409 if a second request reaches the transaction at the same time as the first.
+- **Crash between BatchWrite and TransactWrite** — orphan `SELECTION_ITEM` rows can exist without a parent `SELECTION`. The user retries from the browser; the second attempt re-uploads the files (overwrites in S3), re-BatchWrites the items (idempotent: same SK overwrites same row), and succeeds at the transaction. Acceptable because the orphans don't affect any other access pattern.
+
+### AWS components
+
+| Component | Purpose | Notes |
+|---|---|---|
+| **S3: `niebieskie-aparaty-client-gallery`** (existing main bucket) | Permanent store for the compressed+watermarked WebP/JPEG files | Same bucket already used by gallery/cover/files. CORS must allow PUT from admin origin (already configured). |
+| **DynamoDB**: `niebieskie-aparaty-prod` | Selection + SelectionItem rows | Unchanged keys (`SK = SELECTION#<eventId>` and `SK = SELECTION_ITEM#<eventId>#<imageName>`). |
+
+No SQS queues, no Lambdas, no EventBridge rules, no transient bucket, no DLQs, no CloudWatch alarms — all of that lived in `selection-serverless/`, which is shut down via SAM. The folder is kept in the repo for historical reference.
+
+---
+
+> **Status (historical sections below):** original distributed-pipeline design, **superseded** by §0 above. Original status line: design doc, not yet implemented. Supersedes `gemini-proposal.md` (kept for reference).
 > Scope: photographer uploads 1–2k raw photos per event; system stores, compresses to WebP, indexes in DynamoDB, and flips `Event.selectionAvailable = true` when the whole batch is done.
 
 ## 1. Overview

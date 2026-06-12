@@ -22,6 +22,8 @@ export interface GalleryItem {
   originalFileName: string
   originalObjectKey: string
   webpObjectKey: string | null
+  cloudFrontOriginalUrl: string
+  cloudFrontWebpUrl: string
   width: number | null
   height: number | null
   compressedSize: number | null

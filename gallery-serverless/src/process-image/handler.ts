@@ -18,6 +18,7 @@ import {
 } from '../shared/keys.js'
 import { tryEnqueueFinalize, type GalleryProgress } from '../shared/completion.js'
 import { isPermanentError, isSharpError } from '../shared/errors.js'
+import { signGalleryUrl } from '../shared/sign.js'
 import type { S3EventBridgeEvent } from '../shared/types.js'
 
 export const handler = async (event: SQSEvent): Promise<void> => {
@@ -104,6 +105,11 @@ async function processRecord(record: SQSRecord): Promise<void> {
     }),
   )
 
+  const [cloudFrontOriginalUrl, cloudFrontWebpUrl] = await Promise.all([
+    signGalleryUrl(origKey),
+    signGalleryUrl(outKey),
+  ])
+
   const now = new Date().toISOString()
   const itemKey = { PK: galleryPk(username), SK: galleryItemSk(eventId, imageName) }
 
@@ -118,6 +124,8 @@ async function processRecord(record: SQSRecord): Promise<void> {
       originalFileName,
       originalObjectKey: origKey,
       webpObjectKey: outKey,
+      cloudFrontOriginalUrl,
+      cloudFrontWebpUrl,
       width,
       height,
       compressedSize,
@@ -168,6 +176,8 @@ async function recordFailure(params: {
       imageName,
       originalFileName,
       originalObjectKey,
+      cloudFrontOriginalUrl: '',
+      cloudFrontWebpUrl: '',
       status: 'failed',
       failureReason,
       processedAt: now,

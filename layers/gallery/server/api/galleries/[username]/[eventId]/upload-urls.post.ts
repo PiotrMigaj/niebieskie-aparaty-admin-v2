@@ -2,6 +2,13 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { GalleryUploadUrlsSchema } from '../../../../../shared/types/schemas'
 import { galleryRepository } from '../../../../repository/galleryRepository'
 
+function injectGalleryVersion(safeName: string): string {
+  const hex = crypto.randomUUID().replace(/-/g, '').slice(0, 8)
+  const dotIdx = safeName.lastIndexOf('.')
+  if (dotIdx <= 0) return `${safeName}-${hex}`
+  return `${safeName.slice(0, dotIdx)}-${hex}${safeName.slice(dotIdx)}`
+}
+
 export default defineEventHandler(async (event) => {
   const username = getRouterParam(event, 'username')!
   const eventId = getRouterParam(event, 'eventId')!
@@ -19,11 +26,12 @@ export default defineEventHandler(async (event) => {
       if (!safeName || safeName.startsWith('.')) {
         throw createError({ statusCode: 400, message: `Invalid filename: ${filename}` })
       }
+      const versionedSafeName = injectGalleryVersion(safeName)
       const url = await getSignedUrl(
         getS3(),
         new PutObjectCommand({
           Bucket: galleryUploadBucketName,
-          Key: `${username}/${eventId}/original/${safeName}`,
+          Key: `${username}/${eventId}/original/${versionedSafeName}`,
           ContentType: contentType,
         }),
         { expiresIn: 900 },

@@ -30,21 +30,18 @@ export default defineEventHandler(async (event) => {
 
   const seenImageNames = new Set<string>()
   const itemRecords = body.items.map((it) => {
-    const safeName = toSelectionSafeName(it.originalFileName)
-    if (!safeName) {
-      throw createError({ statusCode: 400, message: `Invalid filename: ${it.originalFileName}` })
+    if (seenImageNames.has(it.imageName)) {
+      throw createError({ statusCode: 422, message: `Duplicate imageName: ${it.imageName}` })
     }
-    const imageName = toSelectionImageName(safeName)
-    if (seenImageNames.has(imageName)) {
-      throw createError({ statusCode: 422, message: `Duplicate imageName after normalisation: ${imageName}` })
-    }
-    seenImageNames.add(imageName)
+    seenImageNames.add(it.imageName)
+    const objectKey = toSelectionObjectKey(body.username, body.eventId, it.imageName)
     return selectionItemRepository.buildRecord({
       selectionId: selectionRecord.selectionId,
       eventId: body.eventId,
       username: body.username,
-      imageName,
-      objectKey: toSelectionObjectKey(body.username, body.eventId, safeName),
+      imageName: it.imageName,
+      objectKey,
+      cloudFrontUrl: signSelectionUrl(objectKey),
       imageWidth: it.imageWidth,
       imageHeight: it.imageHeight,
     })

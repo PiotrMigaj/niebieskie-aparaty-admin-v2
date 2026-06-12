@@ -9,6 +9,7 @@ export interface SelectionItemRecord {
   username: string
   imageName: string
   objectKey: string
+  cloudFrontUrl: string
   imageWidth: number
   imageHeight: number
   selected: boolean
@@ -20,12 +21,13 @@ interface BuildArgs {
   username: string
   imageName: string
   objectKey: string
+  cloudFrontUrl: string
   imageWidth: number
   imageHeight: number
 }
 
 class SelectionItemRepository {
-  buildRecord({ selectionId, eventId, username, imageName, objectKey, imageWidth, imageHeight }: BuildArgs): SelectionItemRecord {
+  buildRecord({ selectionId, eventId, username, imageName, objectKey, cloudFrontUrl, imageWidth, imageHeight }: BuildArgs): SelectionItemRecord {
     return {
       PK: `USER#${username}`,
       SK: `SELECTION_ITEM#${eventId}#${imageName}`,
@@ -35,6 +37,7 @@ class SelectionItemRepository {
       username,
       imageName,
       objectKey,
+      cloudFrontUrl,
       imageWidth,
       imageHeight,
       selected: false,
@@ -96,6 +99,7 @@ class SelectionItemRepository {
       eventId: item.eventId as string,
       username: item.username as string,
       objectKey: item.objectKey as string,
+      cloudFrontUrl: (item.cloudFrontUrl as string) ?? '',
       imageWidth: (item.imageWidth as number) ?? 0,
       imageHeight: (item.imageHeight as number) ?? 0,
       selected: (item.selected as boolean) ?? false,

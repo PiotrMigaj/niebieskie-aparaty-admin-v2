@@ -73,6 +73,12 @@ After adding a new layer, `#layers/<name>/*` alias imports will show `Cannot fin
 
 HTML void elements must not be self-closed: write `<input>` and `<img>`, not `<input/>` or `<img/>` — the Nuxt ESLint config flags self-closing void elements as warnings.
 
+## Nuxt runtimeConfig env var mapping
+
+Nuxt maps `runtimeConfig` keys to env vars by uppercasing and inserting `_` at every camelCase boundary, then prefixing `NUXT_`. So `cloudFrontDomain` → `NUXT_CLOUD_FRONT_DOMAIN`, `uploadBucketName` → `NUXT_UPLOAD_BUCKET_NAME`. Mind every capital letter when writing `.env`.
+
+Multi-line values (PEMs, certs) in `.env` must be wrapped in double quotes — only then does dotenv expand `\n` into real newlines. Convert a PEM file with `awk 'NF {printf "%s\\n", $0}' key.pem` and paste the output between double quotes.
+
 ## Zod version
 
 This project uses **Zod v4** (`^4.4.3`). The `invalid_type_error` / `required_error` constructor options from Zod v3 do not exist — use `.message` on the individual validators instead (e.g. `z.string().min(1, { message: '...' })`).
@@ -105,6 +111,12 @@ Optional relation loading: use `?include=<relation>` query param to embed relate
 
 Never accept S3 `objectKey` from the client in write endpoints — it's an IDOR (an authenticated user can write rows pointing into another user's bucket prefix). Derive `objectKey` server-side from URL params + filename. When a presign endpoint and a later write endpoint both compute the same key, extract the derivation into a single `shared/utils/` helper so they can't drift. Reference: `layers/selection/shared/utils/selectionKey.ts` is shared by `upload-urls.post.ts` and `index.post.ts`.
 
+**Exception for non-deterministic key parts** (e.g. versioned filenames): the presign endpoint generates the randomness, returns the resulting `imageName` to the client, and the persist endpoint accepts `imageName` back. IDOR-safe because the prefix is still derived from authenticated path params (`username`/`eventId`) and the schema regex-validates `imageName` against `[\w.-]+`. Reference: selection `upload-urls.post.ts` → `index.post.ts`.
+
+## CloudFront cache key = URL path only
+
+Both distributions use the AWS-managed `CachingOptimized` policy, which keys cache entries on the URL path only — signed-URL query params (`Expires`, `Signature`, `Key-Pair-Id`) are NOT in the cache key. Consequence: deleting an S3 object and re-uploading new bytes at the same key serves stale content from CloudFront edges for up to ~24h. Mitigation in this codebase is **versioned filenames** — every upload-urls handler injects a random `-<8hex>` suffix before the extension so re-uploads land at fresh paths. Reference: `injectVersion` in `layers/selection/shared/utils/selectionKey.ts` and the inline `injectGalleryVersion` in `layers/gallery/server/api/galleries/[username]/[eventId]/upload-urls.post.ts`.
+
 ## DynamoDB batch + transaction limits
 
 `BatchWriteCommand` accepts max 25 PutRequests/table per call — chunk in JS. `TransactWriteCommand` accepts max 100 items total. For "write N children + create parent + flip sibling flag" atomically when N can exceed ~99: BatchWrite the children first, then one 2-item `TransactWriteCommand` for the parent (`Put` guarded by `attribute_not_exists(PK)`) + the sibling `Update`. Crash window between BatchWrite and TransactWrite leaves orphan children but no parent — retry overwrites them. Reference: `layers/selection/server/api/selections/index.post.ts`.
@@ -125,6 +137,10 @@ For the gallery upload pipeline (`totalPhotos`-then-Lambdas pattern), the detail
 - **External deps need a Lambda Layer, not just `External:` in BuildProperties.** SAM's `nodejs-npm-esbuild` builder produces only the bundled JS — it does NOT ship `node_modules` for anything listed in `External`. Native modules like `sharp` must be packaged as an `AWS::Serverless::LayerVersion` and attached via `Layers:` on the function.
 - **Lambda Layer with `BuildMethod: nodejs22.x`**: `ContentUri` must point to a dir whose root contains `package.json` (NOT `nodejs/package.json`). SAM wraps it as `/opt/nodejs/node_modules/...` itself.
 - **Shared modules + CodeUri**: if multiple handlers import from a common `src/shared/` folder, set `CodeUri: src/` for every function and use `EntryPoints: [<handler-dir>/handler.ts]` + `Handler: <handler-dir>/handler.handler`. SAM only copies the `CodeUri` directory into its esbuild build context — `CodeUri: src/process-image/` would make `../shared/` unresolvable.
+- **`sam deploy --parameter-overrides` does NOT support `file://`** (aws-cli does, SAM doesn't) AND tokenizes on whitespace, so a multi-line value injected via `$(cat …)` gets split into bogus extra params. For multi-line parameters (PEMs, certs), inline them as a `Default: |` block scalar in `template.yaml` and run `sam deploy` with no overrides. Reference: `cloudfront-serverless/template.yaml` (PublicKeyPem parameter).
+- **`sam logs -n <name>`** expects the LOGICAL CloudFormation resource ID (e.g. `ProcessImageFunction`), not the `FunctionName` property value (e.g. `gallery-process-image`). `sam logs --tail` with no `-n` tails every function in the stack.
+- **Lambda Node 22 runtime ships `@aws-sdk/client-*` but NOT `@aws-sdk/cloudfront-signer`.** The blanket `External: ['@aws-sdk/*']` in SAM `BuildProperties` excludes both — signing fails at cold start with `Cannot find module '@aws-sdk/cloudfront-signer'`. Tighten the External list to explicit `@aws-sdk/client-*` entries so signer/utility packages get bundled. Reference: `gallery-serverless/template.yaml` (ProcessImageFunction.Metadata.BuildProperties.External).
+- **Multi-line Lambda secrets (PEMs, private keys)**: use SSM Parameter Store SecureString. `aws ssm put-parameter --type SecureString --value file://key.pem` accepts multi-line input (unlike `sam deploy --parameter-overrides`). Lambda reads via `@aws-sdk/client-ssm` at cold start and caches in module-scope. Reference: `gallery-serverless/src/shared/sign.ts`.
 
 ### Gallery completion gate — DO NOT remove either path
 

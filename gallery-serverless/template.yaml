@@ -23,6 +23,17 @@ Parameters:
   AlarmEmail:
     Type: String
     Description: Email subscribed to the DLQ-depth alarm SNS topic.
+  CloudFrontDomain:
+    Type: String
+    Description: Gallery CloudFront distribution domain (from cloudfront-serverless GalleryDistributionDomainName output). Used to build signed URLs at GalleryItem write time.
+  CloudFrontKeyPairId:
+    Type: String
+    Default: K2IHGS3BJ0VXCW
+    Description: CloudFront public key ID (shared with selection — from cloudfront-serverless PublicKeyId output).
+  CloudFrontPrivateKeyParam:
+    Type: String
+    Default: /niebieskie-aparaty/cloudfront/private-key
+    Description: SSM Parameter Store name (SecureString) holding the CloudFront private key PEM.
 
 Globals:
   Function:
@@ -149,7 +160,11 @@ Resources:
           - process-image/handler.ts
         External:
           - sharp
-          - '@aws-sdk/*'
+          - '@aws-sdk/client-dynamodb'
+          - '@aws-sdk/lib-dynamodb'
+          - '@aws-sdk/client-s3'
+          - '@aws-sdk/client-sqs'
+          - '@aws-sdk/client-ssm'
     Properties:
       FunctionName: gallery-process-image
       CodeUri: src/
@@ -163,6 +178,9 @@ Resources:
           TABLE_NAME: !Ref DynamoTableName
           GALLERY_BUCKET: !Ref GalleryBucketName
           FINALIZE_QUEUE_URL: !Ref FinalizeQueue
+          CLOUD_FRONT_DOMAIN: !Ref CloudFrontDomain
+          CLOUD_FRONT_KEY_PAIR_ID: !Ref CloudFrontKeyPairId
+          CLOUD_FRONT_PRIVATE_KEY_PARAM: !Ref CloudFrontPrivateKeyParam
       Events:
         ProcessingQueueEvent:
           Type: SQS
@@ -189,6 +207,10 @@ Resources:
               Action:
                 - sqs:SendMessage
               Resource: !GetAtt FinalizeQueue.Arn
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${CloudFrontPrivateKeyParam}
 
   # ---------- Lambda: finalize-gallery ----------
 

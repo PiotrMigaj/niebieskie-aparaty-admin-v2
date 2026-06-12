@@ -16,6 +16,7 @@ export interface SelectionItem {
   eventId: string
   username: string
   objectKey: string
+  cloudFrontUrl: string
   imageWidth: number
   imageHeight: number
   selected: boolean

@@ -1,0 +1,16 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "niebieskie-aparaty-cloudfront"
+
+[default.build.parameters]
+use_container = false
+
+[default.deploy.parameters]
+region = "eu-central-1"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "niebieskie-aparaty-cloudfront"
+disable_rollback = true
+image_repositories = []

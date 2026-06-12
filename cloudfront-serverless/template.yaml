@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFront distributions for signed selection + gallery image delivery. Two distributions share one key pair / key group.
+
+Parameters:
+  BucketName:
+    Type: String
+    Default: niebieskie-aparaty-client-gallery
+    Description: S3 bucket hosting selection images. Must already exist outside this stack.
+
+  BucketNameGallery:
+    Type: String
+    Default: niebieskie-aparaty-gallery-images
+    Description: S3 bucket hosting gallery originals + compressed WebPs. Must already exist outside this stack.
+
+  PublicKeyPem:
+    Type: String
+    Description: PEM-encoded RSA public key body (BEGIN/END markers included). Sourced from public-key.pem and inlined here so `sam deploy` needs no parameter overrides (SAM does not expand `file://` in --parameter-overrides).
+    Default: |
+      -----BEGIN PUBLIC KEY-----
+      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr8ybV4DFI+6PR1GANdq+
+      pvaa14F1j9RIObFnayPr/TMPXnJtqtm9cRyJjjDOjsskfQxvq8qEcafBbG2SZW86
+      l1v2zB0ox58gq2KrGGBs3AwiuGZ0SoteTLb/Fq+ybpzCAWiRwliaKyoq71WBvzU4
+      MgETCzZI09WelddRJstCPl0Ay6nwckxgCq3ma59tKiODa02OGGxe4KSETw0jcJ/3
+      UF9WfjR1hxie4rLnTtwj+WADSPtCTy3gXzeKmXOd0o/1qd5xsMj0LLNUOXomSVxU
+      l6r40WbX85VYmPHWVwKAM9/MPkfLXe/auFkboAhct8h1JduGRWo/hGuxFnsaBlfk
+      CwIDAQAB
+      -----END PUBLIC KEY-----
+
+Resources:
+  PublicKey:
+    Type: AWS::CloudFront::PublicKey
+    Properties:
+      PublicKeyConfig:
+        Name: niebieskie-aparaty-selection-pk
+        CallerReference: !Sub "${AWS::StackName}-pk-v1"
+        EncodedKey: !Ref PublicKeyPem
+        Comment: Public key for signing 6-month selection image URLs.
+
+  KeyGroup:
+    Type: AWS::CloudFront::KeyGroup
+    Properties:
+      KeyGroupConfig:
+        Name: niebieskie-aparaty-selection-kg
+        Items:
+          - !Ref PublicKey
+        Comment: Key group enforcing signed-URL access on the selection distribution.
+
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: niebieskie-aparaty-client-gallery-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Selection signed image delivery
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: s3-client-gallery
+            DomainName: !Sub "${BucketName}.s3.${AWS::Region}.amazonaws.com"
+            OriginAccessControlId: !GetAtt OriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: s3-client-gallery
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          TrustedKeyGroups:
+            - !Ref KeyGroup
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+  GalleryOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: niebieskie-aparaty-gallery-images-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  GalleryDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Gallery signed image delivery (originals + compressed WebPs)
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: s3-gallery-images
+            DomainName: !Sub "${BucketNameGallery}.s3.${AWS::Region}.amazonaws.com"
+            OriginAccessControlId: !GetAtt GalleryOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: s3-gallery-images
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          TrustedKeyGroups:
+            - !Ref KeyGroup
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+Outputs:
+  DistributionDomainName:
+    Description: Selection CloudFront distribution domain (set as NUXT_CLOUD_FRONT_DOMAIN).
+    Value: !GetAtt Distribution.DomainName
+
+  DistributionId:
+    Description: Selection CloudFront distribution ID (used in the selection bucket policy AWS:SourceArn condition).
+    Value: !Ref Distribution
+
+  GalleryDistributionDomainName:
+    Description: Gallery CloudFront distribution domain (feeds the gallery Lambda env var CLOUD_FRONT_DOMAIN).
+    Value: !GetAtt GalleryDistribution.DomainName
+
+  GalleryDistributionId:
+    Description: Gallery CloudFront distribution ID (used in the gallery bucket policy AWS:SourceArn condition).
+    Value: !Ref GalleryDistribution
+
+  PublicKeyId:
+    Description: Shared CloudFront public key ID (set as NUXT_CLOUD_FRONT_KEY_PAIR_ID and feeds the gallery Lambda env var CLOUD_FRONT_KEY_PAIR_ID).
+    Value: !Ref PublicKey

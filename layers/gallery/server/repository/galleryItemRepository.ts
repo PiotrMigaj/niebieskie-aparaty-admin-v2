@@ -58,6 +58,8 @@ class GalleryItemRepository {
       originalFileName: item.originalFileName as string,
       originalObjectKey: item.originalObjectKey as string,
       webpObjectKey: (item.webpObjectKey as string | null) ?? null,
+      cloudFrontOriginalUrl: (item.cloudFrontOriginalUrl as string) ?? '',
+      cloudFrontWebpUrl: (item.cloudFrontWebpUrl as string) ?? '',
       width: (item.width as number | null) ?? null,
       height: (item.height as number | null) ?? null,
       compressedSize: (item.compressedSize as number | null) ?? null,

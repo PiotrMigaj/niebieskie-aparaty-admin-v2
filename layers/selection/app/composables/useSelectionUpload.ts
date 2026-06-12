@@ -6,6 +6,7 @@ export interface UploadFile {
   loaded: number
   width: number
   height: number
+  imageName: string
   error: string | null
 }
 
@@ -13,6 +14,7 @@ interface PresignedUrl {
   filename: string
   url: string
   objectKey: string
+  imageName: string
 }
 
 function xhrPut(url: string, file: File, onProgress: (loaded: number) => void): Promise<void> {
@@ -72,6 +74,7 @@ export function useSelectionUpload(username: string, eventId: string, eventTitle
           loaded: 0,
           width: 0,
           height: 0,
+          imageName: '',
           error: null,
         })
         existing.add(file.name)
@@ -141,6 +144,7 @@ export function useSelectionUpload(username: string, eventId: string, eventTitle
           entry.error = 'No presigned URL received'
           continue
         }
+        entry.imageName = presigned.imageName
         entry.status = 'measuring'
         const dims = await readImageDimensions(entry.file)
         entry.width = dims.width
@@ -180,6 +184,7 @@ export function useSelectionUpload(username: string, eventId: string, eventTitle
           maxNumberOfPhotos: max,
           items: uploaded.map((f) => ({
             originalFileName: f.file.name,
+            imageName: f.imageName,
             imageWidth: f.width,
             imageHeight: f.height,
           })),

@@ -16,5 +16,8 @@ export default defineNuxtConfig({
     awsAccessKeyId: "",
     awsSecretAccessKey: "",
     uploadBucketName: "",
+    cloudFrontDomain: "",
+    cloudFrontKeyPairId: "",
+    cloudFrontPrivateKey: "",
   },
 });

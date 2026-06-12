@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 const SelectionItemInputSchema = z.object({
   originalFileName: z.string().min(1),
+  imageName: z.string().min(1).regex(/^[\w.-]+$/, { message: 'imageName has invalid characters' }),
   imageWidth: z.number().int().min(0),
   imageHeight: z.number().int().min(0),
 })

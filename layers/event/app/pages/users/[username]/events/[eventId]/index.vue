@@ -7,8 +7,21 @@ const username = route.params.username as string
 const eventId = route.params.eventId as string
 
 const { event, status, error, refresh } = useEvent(username, eventId, { include: 'files' })
-const { data: selection, status: selectionStatus } = useSelection(username, eventId)
-const { data: gallery, status: galleryStatus } = useGallery(username, eventId)
+const { data: selection, status: selectionStatus, refresh: refreshSelection } = useSelection(username, eventId)
+const { data: gallery, status: galleryStatus, refresh: refreshGallery } = useGallery(username, eventId)
+
+const deleteSelectionOpen = ref(false)
+const deleteGalleryOpen = ref(false)
+
+async function onSelectionDeleted() {
+  await refreshSelection()
+  await refresh?.()
+}
+
+async function onGalleryDeleted() {
+  await refreshGallery()
+  await refresh?.()
+}
 
 const files = computed<File[]>(() => (event?.value as any)?.files ?? [])
 
@@ -128,14 +141,23 @@ function formatDate(value: string | Date) {
           </span>
           <div class="mt-4">
             <div v-if="galleryStatus !== 'success' && galleryStatus !== 'error'" class="h-8" />
-            <UButton
-              v-else-if="gallery"
-              :to="`/users/${username}/events/${eventId}/gallery`"
-              color="neutral"
-              variant="solid"
-              label="View gallery"
-              class="text-[10px] tracking-[0.25em] uppercase"
-            />
+            <div v-else-if="gallery" class="flex items-center gap-2">
+              <UButton
+                :to="`/users/${username}/events/${eventId}/gallery`"
+                color="neutral"
+                variant="solid"
+                label="View gallery"
+                class="text-[10px] tracking-[0.25em] uppercase"
+              />
+              <UButton
+                icon="i-lucide-trash-2"
+                color="neutral"
+                variant="ghost"
+                aria-label="Delete gallery"
+                class="text-gray-400 hover:text-black"
+                @click="deleteGalleryOpen = true"
+              />
+            </div>
             <CreateGallery v-else :username="username" :event-id="e.eventId" :event-title="e.title" />
           </div>
         </div>
@@ -151,18 +173,45 @@ function formatDate(value: string | Date) {
           </span>
           <div class="mt-4">
             <div v-if="selectionStatus !== 'success' && selectionStatus !== 'error'" class="h-8" />
-            <UButton
-              v-else-if="selection"
-              :to="`/users/${username}/events/${eventId}/selections/${selection.selectionId}`"
-              color="neutral"
-              variant="solid"
-              label="View selection"
-              class="text-[10px] tracking-[0.25em] uppercase"
-            />
+            <div v-else-if="selection" class="flex items-center gap-2">
+              <UButton
+                :to="`/users/${username}/events/${eventId}/selections/${selection.selectionId}`"
+                color="neutral"
+                variant="solid"
+                label="View selection"
+                class="text-[10px] tracking-[0.25em] uppercase"
+              />
+              <UButton
+                icon="i-lucide-trash-2"
+                color="neutral"
+                variant="ghost"
+                aria-label="Delete selection"
+                class="text-gray-400 hover:text-black"
+                @click="deleteSelectionOpen = true"
+              />
+            </div>
             <CreateSelection v-else :username="username" :event-id="e.eventId" :event-title="e.title" />
           </div>
         </div>
       </div>
+
+      <DeleteSelection
+        v-if="selection"
+        v-model:open="deleteSelectionOpen"
+        :username="username"
+        :event-id="eventId"
+        :selection="selection"
+        @deleted="onSelectionDeleted"
+      />
+
+      <DeleteGallery
+        v-if="gallery"
+        v-model:open="deleteGalleryOpen"
+        :username="username"
+        :event-id="eventId"
+        :gallery="gallery"
+        @deleted="onGalleryDeleted"
+      />
 
       <!-- Gallery Cover -->
       <div class="border border-black mb-6">

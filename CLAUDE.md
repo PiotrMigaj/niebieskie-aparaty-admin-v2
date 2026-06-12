@@ -44,6 +44,10 @@ Auto-imports are enabled by default: components, composables, and Vue APIs (`ref
 Do NOT export a function named `hashPassword` from `layers/*/shared/utils/` — it would shadow the nuxt-auth-utils global.
 `nuxt-auth-utils` is registered in `layers/auth/nuxt.config.ts`. `useUserSession()` is available in all app code when the auth layer is loaded.
 
+## Vite pre-bundling for layer deps
+
+Third-party deps imported from `layers/*/shared/` (e.g. `zod` in `shared/types/schemas.ts`) are discovered at runtime and trigger a Vite "new dependencies at runtime" warning + page reload on first request. Add them to `vite.optimizeDeps.include` in `nuxt.config.ts`. Currently included: `zod`.
+
 ## Nuxt UI auto-import shadowing
 
 Nuxt UI auto-imports composables that may collide with custom names. Confirmed collisions:
@@ -75,7 +79,15 @@ This project uses **Zod v4** (`^4.4.3`). The `invalid_type_error` / `required_er
 
 ## S3 commands
 
-S3 commands are re-exported from `layers/base/server/utils/s3.ts` for auto-import in server code (same pattern as DynamoDB commands). Currently exported: `PutObjectCommand`, `GetObjectCommand`, `DeleteObjectCommand`, multipart commands. Add new commands there before using them in handlers.
+S3 commands are re-exported from `layers/base/server/utils/s3.ts` for auto-import in server code (same pattern as DynamoDB commands). Currently exported: `PutObjectCommand`, `GetObjectCommand`, `DeleteObjectCommand`, `DeleteObjectsCommand`, `ListObjectsV2Command`, multipart commands. Add new commands there before using them in handlers.
+
+## S3 prefix deletion
+
+For wiping an entire S3 "folder" (e.g. `${username}/${eventId}/selection/` on selection delete): paginate `ListObjectsV2Command` via `ContinuationToken` / `IsTruncated`, then issue one `DeleteObjectsCommand` per page (`Delete.Objects` accepts up to 1000 keys — the same cap as one `ListObjectsV2` page). Idempotent on retry: a second run lists nothing. Reference: `layers/selection/server/api/selections/[username]/[eventId].delete.ts`.
+
+## Auth gating on server handlers
+
+As of 2026-06-11 **no** `server/api/**` handler does an auth/ownership check — `username` comes from path params and is trusted. This is a known project-wide IDOR pattern, not a per-endpoint oversight. When adding a new endpoint, follow the existing (unprotected) pattern for consistency or ask the user to do a sweep-wide auth pass; don't add `requireUserSession` to one handler in isolation.
 
 ## UAlert close callback
 
@@ -103,7 +115,7 @@ For the gallery upload pipeline (`totalPhotos`-then-Lambdas pattern), the detail
 
 ## Serverless (SAM)
 
-`gallery-serverless/` is a SAM project sibling to `layers/` (NOT part of the Nuxt build). It runs the gallery upload pipeline (Lambdas, SQS, shared S3 bucket — **originals kept permanently**, EventBridge wildcard-filtered to `*/original/*` so the compressed-WebP PUT cannot re-trigger).
+`gallery-serverless/` is a SAM project sibling to `layers/` (NOT part of the Nuxt build). It runs the gallery upload pipeline (Lambdas, SQS, the dedicated gallery bucket `niebieskie-aparaty-gallery-images` — **originals kept permanently**, EventBridge wildcard-filtered to `*/original/*` so the compressed-WebP PUT cannot re-trigger).
 
 `selection-serverless/` exists in the repo but is **retired** — the selection upload pipeline was superseded (2026-06-11) when the photographer moved compression + watermarking client-side. The stack has been shut down via AWS SAM; the folder is kept as historical reference (don't deploy it, don't extend it). The current selection flow lives entirely in `layers/selection/` and is described in `selection-knowledge/architecture.md` §0 and `selection-knowledge/how-it-works.md` §0.
 
@@ -121,7 +133,9 @@ Same invariant for the gallery pipeline. Both `gallery-serverless/src/process-im
 ## AWS account
 
 - Region: `eu-central-1`
-- Main upload bucket (permanent, shared across gallery/cover/files/selection): `niebieskie-aparaty-client-gallery`
+- **Two S3 buckets, not one** (originals kept permanently in both):
+  - `niebieskie-aparaty-client-gallery` → `uploadBucketName` (env `NUXT_UPLOAD_BUCKET_NAME`). Used by **selection**, **file**, and **event cover** uploads. Keys: `<username>/<eventId>/selection|files|...`.
+  - `niebieskie-aparaty-gallery-images` → `galleryUploadBucketName` (env `NUXT_GALLERY_UPLOAD_BUCKET_NAME`). Used by the **gallery** upload pipeline (Nuxt presign + SAM Lambdas). Keys: `<username>/<eventId>/original/...` and `<username>/<eventId>/compressed/...`.
 - DynamoDB table: `niebieskie-aparaty-prod`
 - **Lambda account concurrency limit is 10** (default new-account quota). `ReservedConcurrentExecutions` cannot be set on any function — it would drop UnreservedConcurrentExecutions below the required minimum of 10. Request a quota increase before re-introducing reserved concurrency.
 - `AWS::EarlyValidation::ResourceExistenceCheck` deploy failures mean a named resource (S3 bucket, SQS queue, Lambda, etc.) already exists outside the stack — probe with `aws s3api head-bucket` / `aws sqs get-queue-url` / `aws lambda get-function` before re-running.

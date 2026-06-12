@@ -4,6 +4,8 @@ import type { Selection } from '../../shared/types/types'
 export interface SelectionRecord {
   PK: string
   SK: string
+  GSI1PK: string
+  GSI1SK: string
   entityType: 'SELECTION'
   selectionId: string
   eventId: string
@@ -23,6 +25,8 @@ class SelectionRepository {
     return {
       PK: `USER#${input.username}`,
       SK: `SELECTION#${input.eventId}`,
+      GSI1PK: 'ENTITY#SELECTION',
+      GSI1SK: `USER#${input.username}#EVENT#${input.eventId}`,
       entityType: 'SELECTION',
       selectionId,
       eventId: input.eventId,

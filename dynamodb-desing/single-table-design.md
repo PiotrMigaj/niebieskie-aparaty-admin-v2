@@ -171,27 +171,37 @@ An **item collection** is a group of items sharing the same PK, stored together 
 
 ## GSI Design
 
-### GSI1 — Entity Listing Index *(sparse)*
+### GSI1 — Entity Listing Index *(sparse, overloaded)*
 
-> **When to keep:** You have an admin view listing all photographer accounts across the entire system.
+> **When to keep:** You need to list every record of a given entity type across the whole system (admin views, external desktop client, batch jobs).
 > **When to drop:** All your queries always start with a known `username` (from JWT/session). A full-table Scan is the only alternative.
 
-| Attribute | Value | Present on |
+`GSI1PK` is overloaded — one value per entity type. Each entity type lives in its own GSI partition, so the listings never interfere.
+
+| Entity | `GSI1PK` | `GSI1SK` |
 |:---|:---|:---|
-| `GSI1PK` | `ENTITY#USER` | User records only |
-| `GSI1SK` | `USER#<username>` | User records only |
+| User | `ENTITY#USER` | `USER#<username>` |
+| Selection | `ENTITY#SELECTION` | `USER#<username>#EVENT#<eventId>` |
 
 ```
-GSI1 (sparse — only User items projected)
+GSI1 (sparse, overloaded)
 
 GSI1PK = ENTITY#USER
 │
 ├── GSI1SK: USER#oaza_2025   → full User item
 ├── GSI1SK: USER#sm_zajac    → full User item
 └── GSI1SK: USER#zuza_wojtek → full User item
+
+GSI1PK = ENTITY#SELECTION
+│
+├── GSI1SK: USER#oaza_2025#EVENT#<uuid>   → full Selection item
+├── GSI1SK: USER#sm_zajac#EVENT#<uuid>    → full Selection item
+└── GSI1SK: USER#zuza_wojtek#EVENT#<uuid> → full Selection item
 ```
 
-**Operation:** `Query` on GSI1 with `GSI1PK = "ENTITY#USER"` (optionally with `begins_with` on GSI1SK for pagination anchoring).
+**Operations:**
+- `Query` on GSI1 with `GSI1PK = "ENTITY#USER"` — list all users (optionally `begins_with` on GSI1SK for pagination anchoring).
+- `Query` on GSI1 with `GSI1PK = "ENTITY#SELECTION"` — list all selections globally, ordered by username then eventId. Used by the desktop (Electron) client to fetch every selection across tenants.
 
 ---
 
@@ -233,6 +243,7 @@ GSI2PK = EVENT#0c8fe3d3-67c2-4611-ad52-10fa577bcaf4
 | 10 | List download files for event | `Query` | `PK = USER#<username>` AND `SK begins_with FILE#<eventId>#` |
 | 11 | Client gallery access (by tokenId) | `Query` | `PK = TOKEN#<tokenId>` *(returns 1 item, 1:1 relationship)* |
 | 12 | Admin: get token config by eventId | `Query` on **GSI2** | `GSI2PK = EVENT#<eventId>` |
+| 13 | List all selections (desktop client) | `Query` on **GSI1** | `GSI1PK = ENTITY#SELECTION` |
 
 ---
 
@@ -342,6 +353,8 @@ GSI2PK = EVENT#0c8fe3d3-67c2-4611-ad52-10fa577bcaf4
 {
   "PK":          { "S": "USER#sm_zajac" },
   "SK":          { "S": "SELECTION#bce937cd-1a3a-41c5-a74f-3973f726386e" },
+  "GSI1PK":      { "S": "ENTITY#SELECTION" },
+  "GSI1SK":      { "S": "USER#sm_zajac#EVENT#bce937cd-1a3a-41c5-a74f-3973f726386e" },
   "entityType":  { "S": "SELECTION" },
   "selectionId": { "S": "d18e8799-aef7-48b2-a343-1c8fbef1fa64" },
   "eventId":     { "S": "bce937cd-1a3a-41c5-a74f-3973f726386e" },
@@ -424,7 +437,7 @@ Presigned URLs expire. Storing them means the stored value becomes invalid after
 | Events | `eventId` | `USER#<username>` | `EVENT#<eventId>` | Remove `tokenId`, `tokenIdCreatedAt`, `tokenIdValidDays` |
 | *(new)* | — | `USER#<username>` | `GALLERY#<eventId>` | Gallery upload-pipeline header (`galleryId`, counters, `finalizeEnqueued`, `isUploaded`, timestamps) |
 | GalleryItems | `eventId` + `fileName` | `USER#<username>` | `GALLERY_ITEM#<eventId>#<imageName>` | Rewritten to mirror SelectionItem: `originalFileName`, `originalObjectKey`, `webpObjectKey`, `width`, `height`, `compressedSize`, `status`, `failureReason`, `processedAt` |
-| Selections | `selectionId` | `USER#<username>` | `SELECTION#<eventId>` | Remove `selectedImages` list; `selectionId` becomes attribute; **also (2026-06-11)** drop all upload-pipeline attributes (`isUploaded`, `totalPhotos`, `processedSuccessPhotos`, `processedFailedPhotos`, `finalizeEnqueued`, `uploadStartedAt`, `uploadCompletedAt`) — Selection is created only after all uploads complete, in a TransactWrite that also flips `Event.selectionAvailable = true` |
+| Selections | `selectionId` | `USER#<username>` | `SELECTION#<eventId>` | Remove `selectedImages` list; `selectionId` becomes attribute; **also (2026-06-11)** drop all upload-pipeline attributes (`isUploaded`, `totalPhotos`, `processedSuccessPhotos`, `processedFailedPhotos`, `finalizeEnqueued`, `uploadStartedAt`, `uploadCompletedAt`) — Selection is created only after all uploads complete, in a TransactWrite that also flips `Event.selectionAvailable = true`. **2026-06-12:** project into GSI1 with `GSI1PK = ENTITY#SELECTION`, `GSI1SK = USER#<username>#EVENT#<eventId>` so the desktop client can list every selection globally. |
 | SelectionItems | `selectionId` + `imageName` | `USER#<username>` | `SELECTION_ITEM#<eventId>#<imageName>` | No change to attributes (`presignedUrlTimestamp` was never persisted by the new flow — presigned URLs are generated on demand) |
 | Files | `fileId` | `USER#<username>` | `FILE#<eventId>#<fileId>` | No change to attributes |
 | *(new)* | — | `TOKEN#<tokenId>` | `EVENT#<eventId>` | `tokenId`, `tokenCreatedAt`, `tokenValidDays`, `eventId`, `username`, `GSI2PK`, `GSI2SK` |
@@ -446,15 +459,17 @@ graph TD
         TG["TOKEN#tokenId / EVENT#eventId<br/>→ Tenant Gallery"]
     end
 
-    subgraph GSI1 ["GSI1: Entity Listing"]
-        G1["ENTITY#USER<br/>→ all User records"]
+    subgraph GSI1 ["GSI1: Entity Listing (overloaded)"]
+        G1U["ENTITY#USER<br/>→ all User records"]
+        G1S["ENTITY#SELECTION<br/>→ all Selection records"]
     end
 
     subgraph GSI2 ["GSI2: Token Inverted Index"]
         G2["EVENT#eventId<br/>→ TenantGallery record"]
     end
 
-    U -- "GSI1PK=ENTITY#USER" --> G1
+    U -- "GSI1PK=ENTITY#USER" --> G1U
+    S -- "GSI1PK=ENTITY#SELECTION" --> G1S
     TG -- "GSI2PK=EVENT#eventId" --> G2
 ```
 

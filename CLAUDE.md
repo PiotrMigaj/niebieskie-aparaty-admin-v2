@@ -165,6 +165,8 @@ DynamoDB single-table design. Table name: `niebieskie-aparaty-prod`.
 - Multi-tenant: `username` is the tenant key (always known from JWT/session)
 - PK pattern: `USER#<username>` for all user-owned entities; `TOKEN#<tokenId>` for public client gallery access
 - Entities: User, Event, Gallery, GalleryItem, Selection, SelectionItem, File, TenantGallery
-- GSI1: list all users (`ENTITY#USER`); GSI2: look up TenantGallery by eventId (`EVENT#<eventId>`)
+- GSI1: **overloaded entity-listing index** — one partition per entity type (`ENTITY#USER` for users, `ENTITY#SELECTION` for selections with `GSI1SK = USER#<u>#EVENT#<e>`). When a new global "list all X" access pattern is needed (Gallery/File/Event), add `GSI1PK = ENTITY#<TYPE>` to that entity's writes — do NOT create a new GSI. The listings never collide because each lives in its own GSI partition. Reference: `dynamodb-desing/single-table-design.md` GSI1 section.
+- GSI2: look up TenantGallery by eventId (`EVENT#<eventId>`)
 - GSI `IndexName` strings match the field prefix exactly: `'GSI1'`, `'GSI2'`.
+- A separate Electron desktop app (not this repo) is planned to read DynamoDB directly across tenants — it motivates the global listing patterns on GSI1. This Nuxt app itself never lists entities globally; all its queries start from a known `username`.
 - **DynamoDB `ConditionExpression` does NOT support arithmetic (`+`, `-`).** Comparisons take only paths or values, no expressions. To compare derived quantities (e.g. `success + failed === total`), do the arithmetic in JS using `ReturnValues: 'ALL_NEW'` from the prior atomic `UpdateCommand`, then issue a follow-up conditional UpdateItem that only guards a flag (`attribute_not_exists(x) OR x = :false`). Pattern: `gallery-serverless/src/shared/completion.ts` and `layers/gallery/server/utils/tryEnqueueFinalizeGallery.ts`.

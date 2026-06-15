@@ -19,7 +19,7 @@ export default defineEventHandler(async (event) => {
       if (!safeName) {
         throw createError({ statusCode: 400, message: `Invalid filename: ${filename}` })
       }
-      const imageName = injectVersion(safeName)
+      const imageName = safeName
       const objectKey = toSelectionObjectKey(username, eventId, imageName)
       const url = await getSignedUrl(
         getS3(),

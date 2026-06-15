@@ -11,10 +11,3 @@ export function toSelectionImageName(safeName: string): string {
 export function toSelectionObjectKey(username: string, eventId: string, safeName: string): string {
   return `${username}/${eventId}/selection/${safeName}`
 }
-
-export function injectVersion(safeName: string): string {
-  const hex = crypto.randomUUID().replace(/-/g, '').slice(0, 8)
-  const dotIdx = safeName.lastIndexOf('.')
-  if (dotIdx <= 0) return `${safeName}-${hex}`
-  return `${safeName.slice(0, dotIdx)}-${hex}${safeName.slice(dotIdx)}`
-}

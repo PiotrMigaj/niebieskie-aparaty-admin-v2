@@ -12,6 +12,8 @@ const { data: gallery, status: galleryStatus, refresh: refreshGallery } = useGal
 
 const deleteSelectionOpen = ref(false)
 const deleteGalleryOpen = ref(false)
+const invalidateSelectionOpen = ref(false)
+const invalidateGalleryOpen = ref(false)
 
 async function onSelectionDeleted() {
   await refreshSelection()
@@ -150,6 +152,14 @@ function formatDate(value: string | Date) {
                 class="text-[10px] tracking-[0.25em] uppercase"
               />
               <UButton
+                icon="i-lucide-refresh-ccw"
+                color="neutral"
+                variant="ghost"
+                aria-label="Invalidate gallery cache"
+                class="text-gray-400 hover:text-black"
+                @click="invalidateGalleryOpen = true"
+              />
+              <UButton
                 icon="i-lucide-trash-2"
                 color="neutral"
                 variant="ghost"
@@ -182,6 +192,14 @@ function formatDate(value: string | Date) {
                 class="text-[10px] tracking-[0.25em] uppercase"
               />
               <UButton
+                icon="i-lucide-refresh-ccw"
+                color="neutral"
+                variant="ghost"
+                aria-label="Invalidate selection cache"
+                class="text-gray-400 hover:text-black"
+                @click="invalidateSelectionOpen = true"
+              />
+              <UButton
                 icon="i-lucide-trash-2"
                 color="neutral"
                 variant="ghost"
@@ -211,6 +229,20 @@ function formatDate(value: string | Date) {
         :event-id="eventId"
         :gallery="gallery"
         @deleted="onGalleryDeleted"
+      />
+
+      <InvalidateSelectionCache
+        v-if="selection"
+        v-model:open="invalidateSelectionOpen"
+        :username="username"
+        :event-id="eventId"
+      />
+
+      <InvalidateGalleryCache
+        v-if="gallery"
+        v-model:open="invalidateGalleryOpen"
+        :username="username"
+        :event-id="eventId"
       />
 
       <!-- Gallery Cover -->

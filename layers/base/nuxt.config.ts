@@ -19,5 +19,7 @@ export default defineNuxtConfig({
     cloudFrontDomain: "",
     cloudFrontKeyPairId: "",
     cloudFrontPrivateKey: "",
+    cloudFrontDistributionId: "",
+    galleryCloudFrontDistributionId: "",
   },
 });

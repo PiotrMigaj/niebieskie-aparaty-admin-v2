@@ -21,6 +21,10 @@ pnpm nuxi prepare # Regenerate .nuxt/ types — run after changing nuxt.config.t
 pnpm nuxi typecheck # TypeScript check
 ```
 
+## Lint scope
+
+`pnpm lint` runs over the whole repo and surfaces ~70 errors from `selection-serverless/.aws-sam/build/**/*.js` (bundled artifacts of the retired SAM stack — not source code). When checking lint impact of your diff, scope it: `pnpm eslint <file1> <file2> ...`. Don't try to "fix" the SAM build noise; the folder is historical.
+
 ## Architecture
 
 This is a **Nuxt 4** project. The key structural difference from Nuxt 3: application code lives under `app/` rather than at the project root.
@@ -115,7 +119,16 @@ Never accept S3 `objectKey` from the client in write endpoints — it's an IDOR 
 
 ## CloudFront cache key = URL path only
 
-Both distributions use the AWS-managed `CachingOptimized` policy, which keys cache entries on the URL path only — signed-URL query params (`Expires`, `Signature`, `Key-Pair-Id`) are NOT in the cache key. Consequence: deleting an S3 object and re-uploading new bytes at the same key serves stale content from CloudFront edges for up to ~24h. Mitigation in this codebase is **versioned filenames** — every upload-urls handler injects a random `-<8hex>` suffix before the extension so re-uploads land at fresh paths. Reference: `injectVersion` in `layers/selection/shared/utils/selectionKey.ts` and the inline `injectGalleryVersion` in `layers/gallery/server/api/galleries/[username]/[eventId]/upload-urls.post.ts`.
+Both distributions use the AWS-managed `CachingOptimized` policy, which keys cache entries on the URL path only — signed-URL query params (`Expires`, `Signature`, `Key-Pair-Id`) are NOT in the cache key. Consequence: deleting an S3 object and re-uploading new bytes at the same key serves stale content from CloudFront edges for up to ~24h.
+
+Mitigation is **manual CloudFront invalidation**, triggered by the photographer via per-event "Invalidate cache" buttons on the event detail page. Each button POSTs to a small endpoint that issues a single wildcard `CreateInvalidation`:
+
+- Selection: `POST /api/selections/{username}/{eventId}/invalidate-cache` → invalidates `/{username}/{eventId}/selection/*` on the selection distribution.
+- Gallery: `POST /api/galleries/{username}/{eventId}/invalidate-cache` → invalidates `/{username}/{eventId}/*` (covers `original/` + `compressed/`) on the gallery distribution.
+
+Helper: `invalidatePaths(distributionId, paths)` in `layers/base/server/utils/cloudFront.ts` (auto-imported in server code). Distribution IDs come from runtimeConfig: `cloudFrontDistributionId` (selection) and `galleryCloudFrontDistributionId` (gallery) — env `NUXT_CLOUD_FRONT_DISTRIBUTION_ID` / `NUXT_GALLERY_CLOUD_FRONT_DISTRIBUTION_ID`.
+
+**Filenames are NOT versioned.** Earlier code injected an 8-char hex suffix in the presign handlers; that has been removed (`layers/selection/shared/utils/selectionKey.ts` no longer exports `injectVersion`, and the gallery presign handler no longer has the inline `injectGalleryVersion`). Re-uploading the same filename to the same key after delete relies on the photographer pressing the invalidation button before re-upload (propagation takes ~5–15 min). Old DDB rows with `-<hex>` filenames keep working — their stored `objectKey` / `cloudFrontUrl` are self-contained.
 
 ## DynamoDB batch + transaction limits
 
@@ -145,6 +158,12 @@ For the gallery upload pipeline (`totalPhotos`-then-Lambdas pattern), the detail
 ### Gallery completion gate — DO NOT remove either path
 
 Same invariant for the gallery pipeline. Both `gallery-serverless/src/process-image/handler.ts` AND `layers/gallery/server/api/galleries/[username]/[eventId]/finalize-upload.post.ts` MUST call `tryEnqueueFinalizeGallery`. The conditional `finalizeEnqueued` flip is on the Gallery row (`SK = GALLERY#<eventId>`). Keep `gallery-serverless/src/shared/completion.ts` and `layers/gallery/server/utils/tryEnqueueFinalizeGallery.ts` in sync.
+
+## AWS CloudFormation stack names
+
+The deployed stack names don't match the local directory names. Use the ones below with `aws cloudformation describe-stacks --region eu-central-1 --stack-name <name>`:
+- `cloudfront-serverless/` → stack **`niebieskie-aparaty-cloudfront`** (outputs include `DistributionId`, `GalleryDistributionId`, `PublicKeyId`)
+- `gallery-serverless/` → stack **`niebieskie-aparaty-gallery`**
 
 ## AWS account
 

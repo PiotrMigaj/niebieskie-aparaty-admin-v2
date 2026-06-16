@@ -47,6 +47,7 @@ Auto-imports are enabled by default: components, composables, and Vue APIs (`ref
 `nuxt-auth-utils` is installed. `hashPassword`, `verifyPassword`, `passwordNeedsReHash` are global server auto-imports — call them directly in any `server/` file, no import needed.
 Do NOT export a function named `hashPassword` from `layers/*/shared/utils/` — it would shadow the nuxt-auth-utils global.
 `nuxt-auth-utils` is registered in `layers/auth/nuxt.config.ts`. `useUserSession()` is available in all app code when the auth layer is loaded.
+`nuxt-auth-utils` reserves `/api/_auth/*` for its internal session endpoint (`GET /api/_auth/session`, called by `useUserSession().fetch()` and on hydration). `/api/_auth/*` is automatically public because the auth middleware uses an allowlist (see "Auth gating on server handlers" below) — it is NOT in `PROTECTED_PATHS`, so no explicit exclusion is needed. Use `/api/auth/*` (no underscore) for your own auth routes — that's where `login.post.ts` lives.
 
 ## Vite pre-bundling for layer deps
 
@@ -97,11 +98,15 @@ For wiping an entire S3 "folder" (e.g. `${username}/${eventId}/selection/` on se
 
 ## Auth gating on server handlers
 
-As of 2026-06-11 **no** `server/api/**` handler does an auth/ownership check — `username` comes from path params and is trusted. This is a known project-wide IDOR pattern, not a per-endpoint oversight. When adding a new endpoint, follow the existing (unprotected) pattern for consistency or ask the user to do a sweep-wide auth pass; don't add `requireUserSession` to one handler in isolation.
+`layers/auth/server/middleware/requireAuth.ts` uses an **allowlist model** (Spring Security filter-chain style): only paths in `PROTECTED_PATHS` require a session — everything else is public by default. Current protected prefixes: `/api/users`, `/api/events`, `/api/galleries`, `/api/selections`, `/api/files`. New handlers in these prefixes are automatically protected. When adding a new business-domain API layer, add its `/api/<domain>` prefix to `PROTECTED_PATHS`. Public endpoints (login, health checks, webhooks) need no changes. The session payload only proves "the single admin is logged in"; per-row ownership is moot here because the app is single-tenant.
 
 ## UAlert close callback
 
 `:close="{ onClick: () => x = null }"` — assignment expressions return the assigned value; TypeScript rejects this because the callback must return `void`. Use a block body: `:close="{ onClick: () => { x = null } }"`.
+
+## UInput trailing slot for clickable icons
+
+For a clickable trailing element (e.g. password visibility toggle), use `<template #trailing>` with a `<button>` — the `trailing-icon` prop + `@click:trailing` event approach is unreliable in Nuxt UI v3. Example: `layers/auth/app/pages/login.vue`.
 
 ## UTable row-action modal pattern
 

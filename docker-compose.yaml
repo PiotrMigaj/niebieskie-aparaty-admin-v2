@@ -1,0 +1,12 @@
+services:
+  app:
+    image: migi987/niebieskie-aparaty-admin-v2:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    ports:
+      - "${NITRO_PORT:-4500}:4500"
+    env_file:
+      - .env
+    restart: unless-stopped

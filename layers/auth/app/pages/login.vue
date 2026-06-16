@@ -1,57 +1,85 @@
 <script setup lang="ts">
-import { LoginSchema, type LoginInput } from '#layers/auth/shared/types/schemas'
-import type { FormSubmitEvent } from '@nuxt/ui'
-
 definePageMeta({ layout: 'login' })
 
-const state = reactive<Partial<LoginInput>>({
-  username: undefined,
-  password: undefined,
-})
 const { login } = useAuth()
-const errorMessage = ref<string | null>(null)
+const toast = useToast()
+const route = useRoute()
 const loading = ref(false)
-const showPassword = ref(false)
 
-async function onSubmit(event: FormSubmitEvent<LoginInput>) {
-  errorMessage.value = null
+const providers = [
+  {
+    label: 'Sign in with Google',
+    icon: 'i-logos-google-icon',
+    color: 'white' as const,
+    onClick: () => navigateTo('/auth/google', { external: true }),
+  },
+]
+
+const fields = [
+  {
+    name: 'username',
+    label: 'Username',
+    type: 'text' as const,
+    placeholder: 'Enter username',
+    required: true,
+    autocomplete: 'off',
+  },
+  {
+    name: 'password',
+    label: 'Password',
+    type: 'password' as const,
+    placeholder: 'Enter password',
+    required: true,
+    autocomplete: 'new-password',
+  },
+]
+
+onMounted(() => {
+  if (route.query.error === 'unauthorized') {
+    toast.add({
+      title: 'Access denied',
+      description: 'Your email is not allowed to sign in.',
+      color: 'error',
+      icon: 'i-lucide-alert-circle',
+    })
+  }
+  else if (route.query.error === 'oauth') {
+    toast.add({
+      title: 'Google sign-in failed',
+      description: 'An error occurred during Google authentication.',
+      color: 'error',
+      icon: 'i-lucide-alert-circle',
+    })
+  }
+})
+
+async function onSubmit(data: { username: string; password: string }) {
   loading.value = true
   try {
-    await login(event.data)
-  } catch (e: unknown) {
-    const statusCode = (e as { statusCode?: number })?.statusCode
-    errorMessage.value = statusCode === 401 ? 'Invalid username or password' : 'Login failed'
-  } finally {
+    await login(data)
+  }
+  catch {
+    toast.add({
+      title: 'Login failed',
+      description: 'Invalid username or password.',
+      color: 'error',
+      icon: 'i-lucide-alert-circle',
+    })
+  }
+  finally {
     loading.value = false
   }
 }
 </script>
 
 <template>
-  <UForm :schema="LoginSchema" :state="state" class="space-y-4" @submit="onSubmit">
-    <UAlert v-if="errorMessage" color="error" variant="soft" :title="errorMessage" :close="{ onClick: () => { errorMessage = null } }" />
-    <p class="text-center text-sm text-[#888] -mt-2 mb-2">Enter your login and password</p>
-    <UFormField name="username">
-      <UInput v-model="state.username" placeholder="Login" autocomplete="username" class="w-full" size="lg" />
-    </UFormField>
-    <UFormField name="password">
-      <UInput
-        v-model="state.password"
-        :type="showPassword ? 'text' : 'password'"
-        placeholder="Password"
-        autocomplete="current-password"
-        class="w-full"
-        size="lg"
-      >
-        <template #trailing>
-          <button type="button" class="flex items-center text-[#aaa] hover:text-[#555] transition-colors" @click="showPassword = !showPassword">
-            <UIcon :name="showPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'" class="w-4 h-4" />
-          </button>
-        </template>
-      </UInput>
-    </UFormField>
-    <UButton type="submit" block :loading="loading" size="lg" class="uppercase tracking-[3px] mt-2">
-      Login
-    </UButton>
-  </UForm>
+  <UAuthForm
+    description="Enter your login and password"
+    icon="i-lucide-lock"
+    :fields="fields"
+    :submit="{ label: 'Login' }"
+    :loading="loading"
+    :providers="providers"
+    @submit="(event) => onSubmit(event.data)"
+  />
 </template>

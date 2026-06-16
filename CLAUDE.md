@@ -100,6 +100,10 @@ For wiping an entire S3 "folder" (e.g. `${username}/${eventId}/selection/` on se
 
 `layers/auth/server/middleware/requireAuth.ts` uses an **allowlist model** (Spring Security filter-chain style): only paths in `PROTECTED_PATHS` require a session — everything else is public by default. Current protected prefixes: `/api/users`, `/api/events`, `/api/galleries`, `/api/selections`, `/api/files`. New handlers in these prefixes are automatically protected. When adding a new business-domain API layer, add its `/api/<domain>` prefix to `PROTECTED_PATHS`. Public endpoints (login, health checks, webhooks) need no changes. The session payload only proves "the single admin is logged in"; per-row ownership is moot here because the app is single-tenant.
 
+## UAuthForm provider color
+
+`color: 'white'` is not a valid `ButtonProps` color in this project's Nuxt UI version — use `color: 'neutral'` for white-style provider buttons (e.g. Google sign-in).
+
 ## UAlert close callback
 
 `:close="{ onClick: () => x = null }"` — assignment expressions return the assigned value; TypeScript rejects this because the callback must return `void`. Use a block body: `:close="{ onClick: () => { x = null } }"`.

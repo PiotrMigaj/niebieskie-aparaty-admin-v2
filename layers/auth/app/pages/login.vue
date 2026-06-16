@@ -10,7 +10,7 @@ const providers = [
   {
     label: 'Sign in with Google',
     icon: 'i-logos-google-icon',
-    color: 'white' as const,
+    color: 'neutral' as const,
     onClick: () => navigateTo('/auth/google', { external: true }),
   },
 ]

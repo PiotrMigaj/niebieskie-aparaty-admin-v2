@@ -12,6 +12,16 @@ Parameters:
     Default: niebieskie-aparaty-gallery-images
     Description: S3 bucket hosting gallery originals + compressed WebPs. Must already exist outside this stack.
 
+  SelectionWebAclArn:
+    Type: String
+    Default: arn:aws:wafv2:us-east-1:762233765559:global/webacl/CreatedByCloudFront-2fdcd166/08acf320-b7a5-4447-b981-840c54658a9b
+    Description: Web ACL auto-created by the CloudFront pricing plan subscription for the selection distribution. Must remain attached.
+
+  GalleryWebAclArn:
+    Type: String
+    Default: arn:aws:wafv2:us-east-1:762233765559:global/webacl/CreatedByCloudFront-1fe5dbdd/6a67235d-3f50-40cd-8d26-e62266696973
+    Description: Web ACL auto-created by the CloudFront pricing plan subscription for the gallery distribution. Must remain attached.
+
   PublicKeyPem:
     Type: String
     Description: PEM-encoded RSA public key body (BEGIN/END markers included). Sourced from public-key.pem and inlined here so `sam deploy` needs no parameter overrides (SAM does not expand `file://` in --parameter-overrides).
@@ -54,6 +64,32 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
+  # Viewer-response function: forcibly stamps Access-Control-Allow-Origin: * onto every
+  # response and removes Vary: Origin (which would otherwise make the wildcard ACAO
+  # cache-key-sensitive). Used in place of a Response Headers Policy because the Free
+  # CloudFront pricing plan tied to the auto-attached Web ACL blocks custom cache
+  # policies, so we can't include Origin in the cache key as the AWS CORS article
+  # prescribes. This function runs on every response (Hit, Miss, 304) so it's not
+  # subject to the cache-poisoning failure mode we observed with SimpleCORS.
+  # See: https://aws.amazon.com/blogs/networking-and-content-delivery/cors-configuration-through-amazon-cloudfront/
+  AddCorsHeaderFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: niebieskie-aparaty-add-cors-header
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Stamp Access-Control-Allow-Origin on every viewer response
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var response = event.response;
+          response.headers['access-control-allow-origin'] = { value: '*' };
+          response.headers['access-control-allow-methods'] = { value: 'GET, HEAD' };
+          response.headers['access-control-expose-headers'] = { value: 'ETag' };
+          delete response.headers['vary'];
+          return response;
+        }
+
   Distribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -61,7 +97,7 @@ Resources:
         Enabled: true
         Comment: Selection signed image delivery
         HttpVersion: http2and3
-        PriceClass: PriceClass_100
+        WebACLId: !Ref SelectionWebAclArn
         Origins:
           - Id: s3-client-gallery
             DomainName: !Sub "${BucketName}.s3.${AWS::Region}.amazonaws.com"
@@ -78,8 +114,10 @@ Resources:
             - GET
             - HEAD
           Compress: true
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-          ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          FunctionAssociations:
+            - EventType: viewer-response
+              FunctionARN: !GetAtt AddCorsHeaderFunction.FunctionMetadata.FunctionARN
           TrustedKeyGroups:
             - !Ref KeyGroup
         ViewerCertificate:
@@ -101,7 +139,7 @@ Resources:
         Enabled: true
         Comment: Gallery signed image delivery (originals + compressed WebPs)
         HttpVersion: http2and3
-        PriceClass: PriceClass_100
+        WebACLId: !Ref GalleryWebAclArn
         Origins:
           - Id: s3-gallery-images
             DomainName: !Sub "${BucketNameGallery}.s3.${AWS::Region}.amazonaws.com"
@@ -118,8 +156,10 @@ Resources:
             - GET
             - HEAD
           Compress: true
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-          ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          FunctionAssociations:
+            - EventType: viewer-response
+              FunctionARN: !GetAtt AddCorsHeaderFunction.FunctionMetadata.FunctionARN
           TrustedKeyGroups:
             - !Ref KeyGroup
         ViewerCertificate:

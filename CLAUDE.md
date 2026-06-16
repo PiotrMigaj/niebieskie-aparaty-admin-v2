@@ -139,11 +139,17 @@ Helper: `invalidatePaths(distributionId, paths)` in `layers/base/server/utils/cl
 
 **Filenames are NOT versioned.** Earlier code injected an 8-char hex suffix in the presign handlers; that has been removed (`layers/selection/shared/utils/selectionKey.ts` no longer exports `injectVersion`, and the gallery presign handler no longer has the inline `injectGalleryVersion`). Re-uploading the same filename to the same key after delete relies on the photographer pressing the invalidation button before re-upload (propagation takes ~5–15 min). Old DDB rows with `-<hex>` filenames keep working — their stored `objectKey` / `cloudFrontUrl` are self-contained.
 
-## CloudFront Response Headers Policy (CORS)
+## CloudFront CORS
 
-Both distributions attach the AWS-managed `SimpleCORS` policy (`ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c`) in `cloudfront-serverless/template.yaml`, so signed-URL fetches from the client app get `Access-Control-Allow-Origin: *`. Managed policy IDs are global constants — same pattern as the inlined `CachingOptimized` cache policy ID.
+Both distributions use a CloudFront Function on **viewer-response** (`AddCorsHeaderFunction` in `cloudfront-serverless/template.yaml`) that unconditionally stamps `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, HEAD`, `Access-Control-Expose-Headers: ETag` and deletes `Vary` on every response. **Do NOT replace this with Managed-SimpleCORS Response Headers Policy** — empirically that policy didn't apply consistently to browser MISS responses (cache-poisoning when an `<img>` without `crossorigin` populates the cache slot first). A viewer-response Function runs unconditionally per request so it's immune to that failure mode. Reference: https://aws.amazon.com/blogs/networking-and-content-delivery/cors-configuration-through-amazon-cloudfront/.
 
-After attaching or changing a Response Headers Policy, the **browser HTTP cache** can still replay a pre-policy response and report "No 'Access-Control-Allow-Origin' header" even though `curl -I` shows the header is live. Fix order: hard reload (Cmd+Shift+R) → DevTools "Disable cache" → CloudFront invalidation (per-event button). Verify the server side first with `curl -sI -H 'Origin: http://localhost:3333' '<url>' | grep -i access-control`.
+Both S3 buckets (`niebieskie-aparaty-client-gallery`, `niebieskie-aparaty-gallery-images`) allow `GET, HEAD` from all 4 client/admin origins (`localhost:3333`, `localhost:4500`, `app.niebieskie-aparaty.pl`, `admin2.niebieskie-aparaty.pl`) in their bucket CORS rules. S3 auto-emits `Access-Control-Allow-Credentials: true` when bucket CORS is configured — invalid with `ACAO: *` for credentialed fetches. Client uses `credentials: 'omit'` so it's fine; if you ever flip to `include`, strip ACAC inside the Function.
+
+After changing the Function or distribution config, a wildcard invalidation is required to evict pre-change entries. Verify server-side with `curl -sI -H 'Origin: http://localhost:3333' '<url>' | grep -i access-control`.
+
+## CloudFront Free pricing plan constraints
+
+Both distributions have auto-attached Web ACLs (`CreatedByCloudFront-*` ARNs) from a CloudFront Security Savings Bundle subscription, encoded as `WebACLId` parameters in `cloudfront-serverless/template.yaml`. The Free plan blocks three template patterns: (1) custom `AWS::CloudFront::CachePolicy` resources (use Managed-CachingOptimized `658327ea-...` instead), (2) explicit `PriceClass` (omit; it's forced to `PriceClass_All`), (3) removing `WebACLId` on update. Deployment errors mentioning "Free pricing plan" or "can't remove web ACL" mean one of these was violated. Probe live state with `aws cloudfront get-distribution-config --id <id>` before debugging — deployed config may have drifted from what the template last described.
 
 ## DynamoDB batch + transaction limits
 

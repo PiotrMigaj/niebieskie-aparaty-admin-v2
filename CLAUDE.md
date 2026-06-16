@@ -130,6 +130,12 @@ Helper: `invalidatePaths(distributionId, paths)` in `layers/base/server/utils/cl
 
 **Filenames are NOT versioned.** Earlier code injected an 8-char hex suffix in the presign handlers; that has been removed (`layers/selection/shared/utils/selectionKey.ts` no longer exports `injectVersion`, and the gallery presign handler no longer has the inline `injectGalleryVersion`). Re-uploading the same filename to the same key after delete relies on the photographer pressing the invalidation button before re-upload (propagation takes ~5–15 min). Old DDB rows with `-<hex>` filenames keep working — their stored `objectKey` / `cloudFrontUrl` are self-contained.
 
+## CloudFront Response Headers Policy (CORS)
+
+Both distributions attach the AWS-managed `SimpleCORS` policy (`ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c`) in `cloudfront-serverless/template.yaml`, so signed-URL fetches from the client app get `Access-Control-Allow-Origin: *`. Managed policy IDs are global constants — same pattern as the inlined `CachingOptimized` cache policy ID.
+
+After attaching or changing a Response Headers Policy, the **browser HTTP cache** can still replay a pre-policy response and report "No 'Access-Control-Allow-Origin' header" even though `curl -I` shows the header is live. Fix order: hard reload (Cmd+Shift+R) → DevTools "Disable cache" → CloudFront invalidation (per-event button). Verify the server side first with `curl -sI -H 'Origin: http://localhost:3333' '<url>' | grep -i access-control`.
+
 ## DynamoDB batch + transaction limits
 
 `BatchWriteCommand` accepts max 25 PutRequests/table per call — chunk in JS. `TransactWriteCommand` accepts max 100 items total. For "write N children + create parent + flip sibling flag" atomically when N can exceed ~99: BatchWrite the children first, then one 2-item `TransactWriteCommand` for the parent (`Put` guarded by `attribute_not_exists(PK)`) + the sibling `Update`. Crash window between BatchWrite and TransactWrite leaves orphan children but no parent — retry overwrites them. Reference: `layers/selection/server/api/selections/index.post.ts`.

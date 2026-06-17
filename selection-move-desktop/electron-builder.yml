@@ -1,0 +1,28 @@
+appId: pl.niebieskieaparaty.selection-move
+productName: Selection Move
+copyright: Copyright © 2026 Niebieskie Aparaty
+asar: true
+
+directories:
+  output: dist-release
+  buildResources: resources
+
+files:
+  - out/**/*
+  - package.json
+
+mac:
+  category: public.app-category.photography
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  artifactName: ${productName}-${version}.${ext}

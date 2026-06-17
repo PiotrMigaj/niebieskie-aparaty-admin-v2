@@ -1,0 +1,37 @@
+{
+  "name": "selection-move-desktop",
+  "version": "0.1.0",
+  "description": "Niebieskie Aparaty — Selection Move desktop helper",
+  "main": "out/main/index.js",
+  "author": "Niebieskie Aparaty",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "pack:mac": "electron-vite build && electron-builder --mac dmg",
+    "pack:win": "electron-vite build && electron-builder --win portable",
+    "pack:all": "electron-vite build && electron-builder --mac dmg --win portable",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.726.0",
+    "@aws-sdk/lib-dynamodb": "^3.726.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.11"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "electron-builder"
+    ]
+  }
+}

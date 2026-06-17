@@ -363,11 +363,12 @@ GSI2PK = EVENT#0c8fe3d3-67c2-4611-ad52-10fa577bcaf4
   "blocked":     { "BOOL": false },
   "maxNumberOfPhotos":      { "N": "100" },
   "selectedNumberOfPhotos": { "N": "147" },
+  "selectedImages": { "L": [{ "S": "IMG_0001.jpg" }, { "S": "IMG_0004.jpg" }] },
   "createdAt":   { "S": "..." },
   "updatedAt":   { "S": "..." }
 }
 ```
-> `selectedImages` list attribute **removed** — count stays; full selection state is derived from individual `SelectionItem` records, avoiding the 400KB item size limit risk.
+> **2026-06-17:** `selectedImages: List<String>` is the denormalised manifest of "which filenames the client picked", stored as full filenames including extension (`IMG_0001.jpg`). Per-row state (toggle UI, presigned URLs, dimensions) still lives in `SelectionItem` records — `selectedImages` exists so downstream tools (the `selection-move-desktop` Electron helper) can read a finalised selection in a single GetItem instead of paginating `SELECTION_ITEM#` rows. 400KB item-size risk is bounded by `maxNumberOfPhotos`; current caps (≤ ~100 picks of ~16-char names) stay well under 2KB.
 > **Note (2026-06-11):** Selection used to mirror the Gallery header (`isUploaded`, `totalPhotos`, `processedSuccessPhotos`, `processedFailedPhotos`, `finalizeEnqueued`, `uploadStartedAt`, `uploadCompletedAt`) when uploads went through the Lambda pipeline in `selection-serverless/`. Those attributes were dropped after the photographer moved compression + watermarking client-side — the row now only stores metadata, and `Event.selectionAvailable` is flipped in the same TransactWrite that creates the Selection. See `selection-knowledge/architecture.md` §0 for the current flow.
 
 ### Selection Item
@@ -437,7 +438,7 @@ Presigned URLs expire. Storing them means the stored value becomes invalid after
 | Events | `eventId` | `USER#<username>` | `EVENT#<eventId>` | Remove `tokenId`, `tokenIdCreatedAt`, `tokenIdValidDays` |
 | *(new)* | — | `USER#<username>` | `GALLERY#<eventId>` | Gallery upload-pipeline header (`galleryId`, counters, `finalizeEnqueued`, `isUploaded`, timestamps) |
 | GalleryItems | `eventId` + `fileName` | `USER#<username>` | `GALLERY_ITEM#<eventId>#<imageName>` | Rewritten to mirror SelectionItem: `originalFileName`, `originalObjectKey`, `webpObjectKey`, `width`, `height`, `compressedSize`, `status`, `failureReason`, `processedAt` |
-| Selections | `selectionId` | `USER#<username>` | `SELECTION#<eventId>` | Remove `selectedImages` list; `selectionId` becomes attribute; **also (2026-06-11)** drop all upload-pipeline attributes (`isUploaded`, `totalPhotos`, `processedSuccessPhotos`, `processedFailedPhotos`, `finalizeEnqueued`, `uploadStartedAt`, `uploadCompletedAt`) — Selection is created only after all uploads complete, in a TransactWrite that also flips `Event.selectionAvailable = true`. **2026-06-12:** project into GSI1 with `GSI1PK = ENTITY#SELECTION`, `GSI1SK = USER#<username>#EVENT#<eventId>` so the desktop client can list every selection globally. |
+| Selections | `selectionId` | `USER#<username>` | `SELECTION#<eventId>` | `selectionId` is an attribute; **(2026-06-11)** all upload-pipeline attributes (`isUploaded`, `totalPhotos`, `processedSuccessPhotos`, `processedFailedPhotos`, `finalizeEnqueued`, `uploadStartedAt`, `uploadCompletedAt`) were dropped — Selection is created only after all uploads complete, in a TransactWrite that also flips `Event.selectionAvailable = true`. **2026-06-12:** projected into GSI1 with `GSI1PK = ENTITY#SELECTION`, `GSI1SK = USER#<username>#EVENT#<eventId>` so the desktop client can list every selection globally. **2026-06-17:** `selectedImages: List<String>` re-added — denormalised manifest of picked filenames consumed by the `selection-move-desktop` Electron helper (avoids fanning out to `SELECTION_ITEM#` rows). |
 | SelectionItems | `selectionId` + `imageName` | `USER#<username>` | `SELECTION_ITEM#<eventId>#<imageName>` | No change to attributes (`presignedUrlTimestamp` was never persisted by the new flow — presigned URLs are generated on demand) |
 | Files | `fileId` | `USER#<username>` | `FILE#<eventId>#<fileId>` | No change to attributes |
 | *(new)* | — | `TOKEN#<tokenId>` | `EVENT#<eventId>` | `tokenId`, `tokenCreatedAt`, `tokenValidDays`, `eventId`, `username`, `GSI2PK`, `GSI2SK` |

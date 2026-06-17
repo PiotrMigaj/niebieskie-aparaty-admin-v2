@@ -21,6 +21,10 @@ pnpm nuxi prepare # Regenerate .nuxt/ types — run after changing nuxt.config.t
 pnpm nuxi typecheck # TypeScript check
 ```
 
+## pnpm 10 ignored build scripts
+
+pnpm 10 blocks postinstalls for `electron`, `esbuild`, and similar by default — install prints `Ignored build scripts: ...` and the binary is missing at runtime (e.g. `Error: Electron uninstall` from `electron-vite dev`). `pnpm rebuild` and the `pnpm.onlyBuiltDependencies` field in `package.json` are no-ops on this version. Fixes: run `pnpm approve-builds` once (interactive, persists in `~/.config/pnpm/rc`), or invoke the package's own installer directly, e.g. `node node_modules/electron/install.js`. Same applies to any new native dep added under `selection-move-desktop/` or `gallery-serverless/`.
+
 ## Lint scope
 
 `pnpm lint` runs over the whole repo and surfaces ~70 errors from `selection-serverless/.aws-sam/build/**/*.js` (bundled artifacts of the retired SAM stack — not source code). When checking lint impact of your diff, scope it: `pnpm eslint <file1> <file2> ...`. Don't try to "fix" the SAM build noise; the folder is historical.
@@ -208,5 +212,6 @@ DynamoDB single-table design. Table name: `niebieskie-aparaty-prod`.
 - GSI1: **overloaded entity-listing index** — one partition per entity type (`ENTITY#USER` for users, `ENTITY#SELECTION` for selections with `GSI1SK = USER#<u>#EVENT#<e>`). When a new global "list all X" access pattern is needed (Gallery/File/Event), add `GSI1PK = ENTITY#<TYPE>` to that entity's writes — do NOT create a new GSI. The listings never collide because each lives in its own GSI partition. Reference: `dynamodb-desing/single-table-design.md` GSI1 section.
 - GSI2: look up TenantGallery by eventId (`EVENT#<eventId>`)
 - GSI `IndexName` strings match the field prefix exactly: `'GSI1'`, `'GSI2'`.
-- A separate Electron desktop app (not this repo) is planned to read DynamoDB directly across tenants — it motivates the global listing patterns on GSI1. This Nuxt app itself never lists entities globally; all its queries start from a known `username`.
+- A separate Electron desktop app (`selection-move-desktop/` in this repo, but NOT part of the Nuxt build) reads DynamoDB directly across tenants — it motivates the global listing patterns on GSI1. This Nuxt app itself never lists entities globally; all its queries start from a known `username`.
+- **Selection.selectedImages** (`List<String>`, full filenames like `IMG_0001.jpg`) is the denormalised manifest of which photos the client picked. It is the source of truth for downstream tools (the `selection-move-desktop` helper) — they read it in a single GetItem instead of paginating `SELECTION_ITEM#` rows. `SelectionItem` records still exist for per-photo UI state (toggle, presigned URL, dimensions); keep them in sync when implementing the client-pick endpoint.
 - **DynamoDB `ConditionExpression` does NOT support arithmetic (`+`, `-`).** Comparisons take only paths or values, no expressions. To compare derived quantities (e.g. `success + failed === total`), do the arithmetic in JS using `ReturnValues: 'ALL_NEW'` from the prior atomic `UpdateCommand`, then issue a follow-up conditional UpdateItem that only guards a flag (`attribute_not_exists(x) OR x = :false`). Pattern: `gallery-serverless/src/shared/completion.ts` and `layers/gallery/server/utils/tryEnqueueFinalizeGallery.ts`.

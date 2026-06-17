@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:;" />
+    <title>Selection Move</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant:ital,wght@0,300..700;1,300..700&family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">NA</span>
+        <h1 class="brand-title">Selection Move</h1>
+      </div>
+      <div class="header-meta">
+        <span id="creds-meta" class="meta-text"></span>
+        <button id="reset-creds-btn" class="link-btn" hidden>Reset credentials</button>
+      </div>
+    </header>
+
+    <main id="app">
+      <!-- Credentials screen -->
+      <section id="creds-screen" class="screen" hidden>
+        <div class="screen-header">
+          <span class="eyebrow">Setup</span>
+          <h2 class="page-title">AWS Credentials</h2>
+          <p class="page-sub">
+            Stored encrypted in your OS keychain. Use a read-only IAM user scoped to
+            the <code>niebieskie-aparaty-prod</code> table.
+          </p>
+        </div>
+
+        <form id="creds-form" class="form-card">
+          <label class="field">
+            <span class="field-label">Access Key ID</span>
+            <input name="accessKeyId" type="text" required autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span class="field-label">Secret Access Key</span>
+            <input name="secretAccessKey" type="password" required autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Region</span>
+              <input name="region" type="text" value="eu-central-1" required />
+            </label>
+            <label class="field">
+              <span class="field-label">Table Name</span>
+              <input name="tableName" type="text" value="niebieskie-aparaty-prod" required />
+            </label>
+          </div>
+          <div class="form-actions">
+            <button id="creds-cancel-btn" type="button" class="btn-secondary" hidden>Cancel</button>
+            <button type="submit" class="btn-primary">Save &amp; Continue</button>
+          </div>
+          <p id="creds-error" class="form-error" hidden></p>
+        </form>
+      </section>
+
+      <!-- Selections list screen -->
+      <section id="list-screen" class="screen" hidden>
+        <div class="screen-header">
+          <span class="eyebrow">Step 1</span>
+          <h2 class="page-title">Pick a finalised selection</h2>
+          <p class="page-sub">
+            Only selections marked as <strong>blocked</strong> (client has finished picking) are eligible.
+          </p>
+        </div>
+
+        <div class="toolbar">
+          <input id="search-input" type="search" placeholder="Search by title or username…" />
+          <button id="reload-btn" class="btn-secondary">Reload</button>
+        </div>
+
+        <div id="list-status" class="status-line"></div>
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="col-pick"></th>
+                <th>Event</th>
+                <th>User</th>
+                <th class="col-num">Picked</th>
+                <th>Status</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="selections-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="screen-footer">
+          <button id="continue-btn" class="btn-primary" disabled>Continue →</button>
+        </div>
+      </section>
+
+      <!-- Folder + confirm screen -->
+      <section id="folder-screen" class="screen" hidden>
+        <div class="screen-header">
+          <span class="eyebrow">Step 2</span>
+          <h2 class="page-title">Choose source folder</h2>
+          <p class="page-sub">
+            The selected photos will be moved into a new <code>wybrane/</code> subfolder inside it.
+          </p>
+        </div>
+
+        <div class="summary-card">
+          <div class="summary-row">
+            <span class="summary-key">Selection</span>
+            <span id="selected-title" class="summary-val"></span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-key">User</span>
+            <span id="selected-user" class="summary-val"></span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-key">Photos to move</span>
+            <span id="selected-count" class="summary-val"></span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-key">Source folder</span>
+            <span id="selected-folder" class="summary-val muted">— not selected —</span>
+          </div>
+        </div>
+
+        <div class="screen-footer">
+          <button id="back-to-list-btn" class="btn-secondary">← Back</button>
+          <button id="pick-folder-btn" class="btn-secondary">Choose folder…</button>
+          <button id="start-move-btn" class="btn-primary" disabled>Start move</button>
+        </div>
+      </section>
+
+      <!-- Progress screen -->
+      <section id="progress-screen" class="screen" hidden>
+        <div class="screen-header">
+          <span class="eyebrow">In progress</span>
+          <h2 class="page-title">Moving photos…</h2>
+        </div>
+
+        <div class="progress-card">
+          <div class="progress-bar-wrap">
+            <div id="progress-bar" class="progress-bar"></div>
+          </div>
+          <div class="progress-meta">
+            <span id="progress-counts">0 / 0</span>
+            <span id="progress-current" class="muted"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Summary screen -->
+      <section id="summary-screen" class="screen" hidden>
+        <div class="screen-header">
+          <span class="eyebrow">Done</span>
+          <h2 class="page-title">Summary</h2>
+          <p id="summary-destination" class="page-sub"></p>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat stat-good"><span class="stat-num" id="stat-moved">0</span><span class="stat-label">Moved</span></div>
+          <div class="stat"><span class="stat-num" id="stat-missing">0</span><span class="stat-label">Missing</span></div>
+          <div class="stat"><span class="stat-num" id="stat-existed">0</span><span class="stat-label">Already existed</span></div>
+          <div class="stat stat-bad"><span class="stat-num" id="stat-errored">0</span><span class="stat-label">Errored</span></div>
+        </div>
+
+        <div id="summary-details" class="summary-details"></div>
+
+        <div class="screen-footer">
+          <button id="done-btn" class="btn-primary">Back to selections</button>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

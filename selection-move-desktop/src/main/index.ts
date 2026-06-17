@@ -1,11 +1,15 @@
 import { join } from 'node:path'
-import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, app, dialog, ipcMain, nativeImage, shell } from 'electron'
 import { clearCredentials, loadCredentials, saveCredentials } from './credentials'
 import type { Credentials } from './credentials'
 import { listSelections } from './ddb'
 import { moveSelectedImages } from './mover'
 
 const isDev = !app.isPackaged
+
+const iconPath = isDev
+  ? join(__dirname, '../../resources/icon.png')
+  : join(process.resourcesPath, 'icon.png')
 
 let mainWindow: BrowserWindow | null = null
 
@@ -17,6 +21,7 @@ function createWindow(): void {
     minHeight: 600,
     backgroundColor: '#ffffff',
     title: 'Selection Move',
+    icon: nativeImage.createFromPath(iconPath),
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

@@ -11,8 +11,13 @@ files:
   - out/**/*
   - package.json
 
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+
 mac:
   category: public.app-category.photography
+  icon: resources/icon.png
   target:
     - target: dmg
       arch:
@@ -21,6 +26,7 @@ mac:
   artifactName: ${productName}-${version}-${arch}.${ext}
 
 win:
+  icon: resources/icon.ico
   target:
     - target: portable
       arch:
